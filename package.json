@@ -1,0 +1,22 @@
+{
+  "name": "myvtkapp",
+  "version": "1.0.0",
+  "description": "for test",
+  "main": "./dist/src/index.js",
+  "scripts": {
+    "build": "webpack --progress --mode=development",
+    "start": "webpack serve --progress --mode=development --static=dist",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "whywhyf",
+  "license": "ISC",
+  "dependencies": {
+    "@kitware/vtk.js": "^29.7.3"
+  },
+  "devDependencies": {
+    "json-loader": "^0.5.7",
+    "webpack": "^5.90.3",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.2"
+  }
+}
