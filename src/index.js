@@ -24,7 +24,7 @@ import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 // import自定义的函数
-import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint} from './render'
+import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds} from './render'
 import { L } from '@kitware/vtk.js/macros2';
 import { obj } from '@kitware/vtk.js/macros';
 
@@ -118,7 +118,8 @@ fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 // request obj from backend
 // ----------------------------------------------------------------------------
 let polyTeeth = null; 
-let labelTeeth = null;   
+let labelTeeth = null; 
+let colorArray = null;  
 const TeethMapper = vtkMapper.newInstance();
 const TeethActor = vtkActor.newInstance();
 
@@ -151,6 +152,7 @@ fetch('http://127.0.0.1:8000/polyData/')
 
     // 根据json渲染模型
     renderPolyDataPointByLabel(polyTeeth, labelTeeth)
+    colorArray = polyTeeth.getPointData().getScalars();
 
     // 连接到actor并渲染
     TeethActor.setMapper(TeethMapper);
@@ -222,7 +224,7 @@ sphereActor.getProperty().setColor(1.0, 0.0, 0.0);
 // ----------------------------------------------------------------------------
 // create a flag to indicate if the mouse is down
 // ----------------------------------------------------------------------------
-var isRightMousePressed = false;
+let isRightMousePressed = false;
 
 
 // ----------------------------------------------------------------------------
@@ -239,7 +241,7 @@ picker.addPickList(TeethActor);
 // Pick on mouse right click
 renderWindow.getInteractor().onRightButtonPress((callData) => {
   isRightMousePressed = true;
-
+  return;
   if (renderer !== callData.pokedRenderer) {
     return;
   }
@@ -280,20 +282,6 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
     renderer.addActor(sphereActor);
     // datascoure数据更新时，只需更新到mapper的连接，再addactor,其余可在初始化时设置好
     
-
-    // for (let i = 0; i < pickedPoints.length; i++) {
-    //   const pickedPoint = pickedPoints[i];
-    //   console.log(`Picked: ${pickedPoint}`);
-    //   const sphere = vtkSphereSource.newInstance();
-    //   sphere.setCenter(pickedPoint);
-    //   sphere.setRadius(0.01);
-    //   const sphereMapper = vtkMapper.newInstance();
-    //   sphereMapper.setInputData(sphere.getOutputData());
-    //   const sphereActor = vtkActor.newInstance();
-    //   sphereActor.setMapper(sphereMapper);
-    //   sphereActor.getProperty().setColor(0.0, 1.0, 0.0);
-    //   renderer.addActor(sphereActor);
-    // }
   }
   renderWindow.render();
 });
@@ -304,45 +292,46 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
 
 
 // Pick on mouse move
-renderWindow.getInteractor().onMouseMove((callData) => {
-  if (renderer !== callData.pokedRenderer) {
-    return;
-  }
+// renderWindow.getInteractor().onMouseMove((callData) => {
+//   return;
+//   if (renderer !== callData.pokedRenderer) {
+//     return;
+//   }
 
-  if (isRightMousePressed == false){ 
+//   if (isRightMousePressed == false){ 
 
-  }
-  else{
-      const pos = callData.position;
-      const point = [pos.x, pos.y, 0.0];
-      console.log(`Pick at: ${point}`);
-      picker.pick(point, renderer);
+//   }
+//   else{
+//       const pos = callData.position;
+//       const point = [pos.x, pos.y, 0.0];
+//       console.log(`Pick at: ${point}`);
+//       picker.pick(point, renderer);
 
-      if (picker.getActors().length === 0) {
+//       if (picker.getActors().length === 0) {
 
-      }
-      else{
-        const pickedCellId = picker.getCellId();
-        console.log('Picked cell: ', pickedCellId);
+//       }
+//       else{
+//         const pickedCellId = picker.getCellId();
+//         console.log('Picked cell: ', pickedCellId);
 
-        // 编辑cell
-        // drawCell(polyData, pickedCellId, labelData);
+//         // 编辑cell
+//         // drawCell(polyData, pickedCellId, labelData);
 
-        const pickedPoints = picker.getPickedPositions();
+//         const pickedPoints = picker.getPickedPositions();
 
-        // 更新球体位置
-        const pickedPoint = pickedPoints[0];
-        console.log(`Picked: ${pickedPoint}`);
-        sphere.setCenter(pickedPoint);
-        sphere.setRadius(0.01);
-        sphereMapper.setInputData(sphere.getOutputData());
-        sphereActor.setMapper(sphereMapper);
-        renderer.addActor(sphereActor);
-  }
+//         // 更新球体位置
+//         const pickedPoint = pickedPoints[0];
+//         console.log(`Picked: ${pickedPoint}`);
+//         sphere.setCenter(pickedPoint);
+//         sphere.setRadius(0.01);
+//         sphereMapper.setInputData(sphere.getOutputData());
+//         sphereActor.setMapper(sphereMapper);
+//         renderer.addActor(sphereActor);
+//   }
 
-  }
-  renderWindow.render();
-});
+//   }
+//   renderWindow.render();
+// });
 
 
 // Pick on mouse release
@@ -423,7 +412,7 @@ function pickOnMouseEvent(event) {
 } 
 
 // 限制鼠标事件处理的频率以提高性能
-const throttleMouseHandler = throttle(pickOnMouseEvent, 50);
+const throttleMouseHandler = throttle(pickOnMouseEvent, 20);
 // 添加鼠标移动的事件监听器 
 document.addEventListener('mousemove', throttleMouseHandler);
 
@@ -503,8 +492,18 @@ function processSelections(selections) {
       // 如果硬件选择器配置选择cell
       const cellPoints = input.getCellPoints(attributeID);
       updateAssociationTooltip('Cell', attributeID);
+
+      // 如果此时有按下右键，根据cellid更新渲染
+      // drawPoint(polyTeeth, attributeID, labelTeeth);
+
       if (cellPoints) {
         const pointIds = cellPoints.cellPointIds;
+
+        // 如果此时有按下右键，根据pointids更新渲染
+        if (isRightMousePressed){
+          drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+        }
+        
         // Find the closest cell point, and use that as cursor position
         const points = Array.from(pointIds).map((pointId) =>
           input.getPoints().getPoint(pointId)

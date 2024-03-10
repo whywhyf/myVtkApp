@@ -108,7 +108,7 @@ export function renderPolyDataPointByLabel(polyData, labelData){
 }
 
 
-// 根据拾取渲染point
+// 根据拾取的cellid渲染point
 export function drawPoint(polyData, cellId, labelData){
     // 从polydata的cell获取其点id array
     var cellPointIds = polyData.getCellPoints(cellId)['cellPointIds']
@@ -133,4 +133,31 @@ export function drawPoint(polyData, cellId, labelData){
     // 渲染  
     // renderWindow.update()
     renderWindow.render();  
+}
+
+
+// 根据拾取的pointsids渲染point
+export function drawPointbyPointIds(polyData, pointIds, labelData){
+
+    // 获取scalars设置颜色 用dataarray存储颜色标量
+    var emptyArray = polyData.getPointData().getScalars();
+
+    // 改变该cell的点的label
+    for (let pointId of pointIds){
+        labelData['labels'][pointId] = 1; 
+        // 编辑的颜色
+        emptyArray.setTuple(pointId,[0.8])
+    }
+    // console.log(labelData)
+
+    // 更新emptyArray
+    emptyArray.dataChange()
+    // emptyArray.modified()
+
+    // 更新polyData
+    polyData.modified()
+
+    // 渲染  
+    // renderWindow.update()
+    // renderWindow.render();  
 }
