@@ -18,7 +18,11 @@ import vtkSphereSource from '@kitware/vtk.js/Filters/Sources/SphereSource';
 import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  
 import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
 import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
-
+import { FieldAssociations } from '@kitware/vtk.js/Common/DataModel/DataSet/Constants';
+import vtkMath from '@kitware/vtk.js/Common/Core/Math';
+import { mat4 } from 'gl-matrix';
+import { throttle } from '@kitware/vtk.js/macros';
+import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 // import自定义的函数
 import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint} from './render'
 import { L } from '@kitware/vtk.js/macros2';
@@ -43,6 +47,30 @@ const controlPanel = `
   </tr>
 </table>
 `;
+
+
+// ----------------------------------------------------------------------------
+// Create DOM tooltip
+// ----------------------------------------------------------------------------
+const tooltipsElem = document.createElement('div');
+tooltipsElem.style.position = 'absolute';
+tooltipsElem.style.top = 0;
+tooltipsElem.style.left = 0;
+tooltipsElem.style.padding = '10px';
+tooltipsElem.style.zIndex = 1;
+tooltipsElem.style.background = 'white';
+tooltipsElem.style.textAlign = 'center';
+
+const positionTooltipElem = document.createElement('div');
+const fieldIdTooltipElem = document.createElement('div');
+const compositeIdTooltipElem = document.createElement('div');
+const propIdTooltipElem = document.createElement('div');
+tooltipsElem.appendChild(positionTooltipElem);
+tooltipsElem.appendChild(propIdTooltipElem);
+tooltipsElem.appendChild(fieldIdTooltipElem);
+tooltipsElem.appendChild(compositeIdTooltipElem);
+
+document.querySelector('body').appendChild(tooltipsElem);
 // ----------------------------------------------------------------------------
 // Standard rendering code setup
 // ----------------------------------------------------------------------------
@@ -116,7 +144,9 @@ fetch('http://127.0.0.1:8000/polyData/')
     // console.log(polyTeeth.getNumberOfPoints())
 
     // let b = JSON.parse(JSON.stringify(polyTeeth));
-    polyTeeth.buildCells()
+    if (!polyTeeth.getCells()) {
+      polyTeeth.buildCells();
+    }
     labelTeeth = data['labelData']
 
     // 根据json渲染模型
@@ -139,6 +169,8 @@ fetch('http://127.0.0.1:8000/polyData/')
     console.error('发生错误:', error);  
   });  
 
+
+// 将base64编码的字符串编码为arraybuffer
 function base64ToArrayBuffer(base64) {
   const binaryString = window.atob(base64);
   const len = binaryString.length;
@@ -150,38 +182,28 @@ function base64ToArrayBuffer(base64) {
 }
  
 
-
-// ----------------------------------------------------------------------------
-// 渲染
-// ----------------------------------------------------------------------------
-// renderPolyDataByLabel(polyData, labelData);
-// console.log('polydata, labeldata:', polyData, labelData)
-// console.log('scalars:', polyData.getCellData().getScalars().getData())
-
-//创建一个filter用于预处理dataset的数据
-const filter = vtkCalculator.newInstance();
-
-// 将filter连接到dataset
-// filter.setInputConnection(coneSource.getOutputPort(0));
-
-
-
-// 设计filter的处理程序
-// filter.setFormulaSimple(FieldDataTypes.CELL, [], 'random', () => Math.random());
-
-
-// const mapper = vtkMapper.newInstance();
-
-// mapper.setInputData(polyData)
-
-// const actor = vtkActor.newInstance();
-// actor.setMapper(mapper);
-// actor.setPosition(500000.0, 0.0, 0.0);
-
-// renderer.addActor(actor);
 renderer.resetCamera();
 renderWindow.render();
 fpsMonitor.update();
+
+
+// ----------------------------------------------------------------------------
+// Create rendering infrastructure
+// ----------------------------------------------------------------------------
+const interactor = renderWindow.getInteractor();
+const apiSpecificRenderWindow = interactor.getView();
+
+
+// ----------------------------------------------------------------------------
+// Create hardware selector
+// ----------------------------------------------------------------------------
+const hardwareSelector = apiSpecificRenderWindow.getSelector();
+hardwareSelector.setCaptureZValues(true);
+// TODO: bug in FIELD_ASSOCIATION_POINTS mode
+// hardwareSelector.setFieldAssociation(
+//   FieldAssociations.FIELD_ASSOCIATION_POINTS
+// );
+hardwareSelector.setFieldAssociation(FieldAssociations.FIELD_ASSOCIATION_CELLS);
 
 
 
@@ -333,23 +355,23 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 // UI control handling
 // -----------------------------------------------------------
 
-fullScreenRenderer.addController(controlPanel);
-const representationSelector = document.querySelector('.representations');
-const resolutionChange = document.querySelector('.resolution');
+// fullScreenRenderer.addController(controlPanel);
+// const representationSelector = document.querySelector('.representations');
+// const resolutionChange = document.querySelector('.resolution');
 
-representationSelector.addEventListener('change', (e) => {
-  const newRepValue = Number(e.target.value);
-  actor.getProperty().setRepresentation(newRepValue);
-  renderWindow.render();
-  fpsMonitor.update();
-});
+// representationSelector.addEventListener('change', (e) => {
+//   const newRepValue = Number(e.target.value);
+//   actor.getProperty().setRepresentation(newRepValue);
+//   renderWindow.render();
+//   fpsMonitor.update();
+// });
 
-resolutionChange.addEventListener('input', (e) => {
-  const resolution = Number(e.target.value);
-  coneSource.setResolution(resolution);
-  renderWindow.render();
-  fpsMonitor.update();
-});
+// resolutionChange.addEventListener('input', (e) => {
+//   const resolution = Number(e.target.value);
+//   coneSource.setResolution(resolution);
+//   renderWindow.render();
+//   fpsMonitor.update();
+// });
 
 // -----------------------------------------------------------
 // Make some variables global so that you can inspect and
@@ -361,3 +383,210 @@ global.TeethMapper = TeethMapper;
 global.TeethActor = TeethActor;
 global.renderer = renderer;
 global.renderWindow = renderWindow;
+
+
+// ----------------------------------------------------------------------------
+// Create Picking pointer
+// ----------------------------------------------------------------------------
+
+const pointerSource = vtkSphereSource.newInstance({
+  phiResolution: 15,
+  thetaResolution: 15,
+  radius: 0.01,
+});
+const pointerMapper = vtkMapper.newInstance();
+const pointerActor = vtkActor.newInstance();
+pointerActor.setMapper(pointerMapper);
+pointerMapper.setInputConnection(pointerSource.getOutputPort());
+
+// -----------------------------------------------------------
+// selection by hardware
+// -----------------------------------------------------------
+
+// 在鼠标事件上进行拾取的函数  
+function pickOnMouseEvent(event) {  
+  if (interactor.isAnimating()) {  
+    // 在场景交互期间阻止拾取  
+    return;  
+  }  
+  const [x, y] = eventToWindowXY(event);  
+  
+  // 隐藏指针角色并启动基于硬件的拾取  
+  // pointerActor.setVisibility(false);  
+  hardwareSelector.getSourceDataAsync(renderer, x, y, x, y).then((result) => {  
+    if (result) {  
+      processSelections(result.generateSelection(x, y, x, y));  
+    } else {  
+      processSelections(null);  
+    }  
+  });  
+} 
+
+// 限制鼠标事件处理的频率以提高性能
+const throttleMouseHandler = throttle(pickOnMouseEvent, 50);
+// 添加鼠标移动的事件监听器 
+document.addEventListener('mousemove', throttleMouseHandler);
+
+
+// ----------------------------------------------------------------------------
+// Create Mouse listener for picking on mouse move
+// ----------------------------------------------------------------------------
+function eventToWindowXY(event) {
+  // We know we are full screen => window.innerXXX
+  // Otherwise we can use pixel device ratio or else...
+  const { clientX, clientY } = event;
+  const [width, height] = apiSpecificRenderWindow.getSize();
+  const x = Math.round((width * clientX) / window.innerWidth);
+  const y = Math.round(height * (1 - clientY / window.innerHeight)); // Need to flip Y
+  return [x, y];
+}
+
+
+// ----------------------------------------------------------------------------
+// process selection
+// ----------------------------------------------------------------------------
+function processSelections(selections) {
+  // 如果没有进行选择，则重置actor颜色和工具提示
+  // renderer.getActors().forEach((a) => a.getProperty().setColor(...WHITE));
+  if (!selections || selections.length === 0) {
+    lastProcessedActor = null;
+    updateAssociationTooltip();
+    updateCursor();
+    updateCompositeAndPropIdTooltip();
+    return;
+  }
+
+  // 从第一个选择中提取属性
+  // 此时已选中目标
+  const {
+    worldPosition: rayHitWorldPosition,
+    compositeID,
+    prop,
+    propID,
+    attributeID,
+  } = selections[0].getProperties();
+
+  // 更新复合ID和属性ID的工具提示
+  updateCompositeAndPropIdTooltip(compositeID, propID);
+
+  let closestCellPointWorldPosition = [...rayHitWorldPosition];
+  if (attributeID || attributeID === 0) {
+    const input = prop.getMapper().getInputData();
+    if (!input.getCells()) {
+      input.buildCells();
+    }
+
+    // Get matrices to convert coordinates: (prop coordinates) <-> (world coordinates)
+    const glTempMat = mat4.fromValues(...prop.getMatrix());
+    mat4.transpose(glTempMat, glTempMat);
+    const propToWorld = vtkMatrixBuilder.buildFromDegree().setMatrix(glTempMat);
+    mat4.invert(glTempMat, glTempMat);
+    const worldToProp = vtkMatrixBuilder.buildFromDegree().setMatrix(glTempMat);
+    // Compute the position of the cursor in prop coordinates
+    const propPosition = [...rayHitWorldPosition];
+    worldToProp.apply(propPosition);
+
+    if (
+      // 判断硬件选择器的配置项
+      hardwareSelector.getFieldAssociation() ===
+      FieldAssociations.FIELD_ASSOCIATION_POINTS
+    ) {
+      // Selecting points
+      // 如果硬件选择器配置选择point
+      closestCellPointWorldPosition = [
+        ...input.getPoints().getTuple(attributeID),
+      ];
+      propToWorld.apply(closestCellPointWorldPosition);
+      updateAssociationTooltip('Point', attributeID);
+    } else {
+      // Selecting cells
+      // 如果硬件选择器配置选择cell
+      const cellPoints = input.getCellPoints(attributeID);
+      updateAssociationTooltip('Cell', attributeID);
+      if (cellPoints) {
+        const pointIds = cellPoints.cellPointIds;
+        // Find the closest cell point, and use that as cursor position
+        const points = Array.from(pointIds).map((pointId) =>
+          input.getPoints().getPoint(pointId)
+        );
+        const distance = (pA, pB) =>
+          vtkMath.distance2BetweenPoints(pA, propPosition) -
+          vtkMath.distance2BetweenPoints(pB, propPosition);
+        const sorted = points.sort(distance);
+        closestCellPointWorldPosition = [...sorted[0]];
+        propToWorld.apply(closestCellPointWorldPosition);
+      }
+    }
+  }
+  lastProcessedActor = prop;
+  // Use closestCellPointWorldPosition or rayHitWorldPosition
+  updateCursor(closestCellPointWorldPosition);
+
+  // Make the picked actor green
+  // prop.getProperty().setColor(...GREEN);
+
+  // We hit the glyph, let's scale the picked glyph
+  // if (prop === cylinderActor) {
+  //   scaleArray.fill(0.5);
+  //   scaleArray[compositeID] = 0.7;
+  //   cylinderPointSet.modified();
+  //   needGlyphCleanup = true;
+  // } else if (needGlyphCleanup) {
+  //   needGlyphCleanup = false;
+  //   scaleArray.fill(0.5);
+  //   cylinderPointSet.modified();
+  // }
+  renderWindow.render();
+}
+
+
+// ----------------------------------------------------------------------------
+// 更新tooltip中的compositeID, propID
+// ----------------------------------------------------------------------------
+let needGlyphCleanup = false;
+let lastProcessedActor = null;
+
+const updatePositionTooltip = (worldPosition) => {
+  if (lastProcessedActor) {
+    positionTooltipElem.innerHTML = `Position: ${worldPosition
+      .map((v) => v.toFixed(3))
+      .join(' , ')}`;
+  } else {
+    positionTooltipElem.innerHTML = '';
+  }
+};
+
+
+const updateCompositeAndPropIdTooltip = (compositeID, propID) => {
+  if (compositeID !== undefined) {
+    compositeIdTooltipElem.innerHTML = `Composite ID: ${compositeID}`;
+  } else {
+    compositeIdTooltipElem.innerHTML = '';
+  }
+  if (propID !== undefined) {
+    propIdTooltipElem.innerHTML = `Prop ID: ${propID}`;
+  } else {
+    propIdTooltipElem.innerHTML = '';
+  }
+};
+
+
+const updateAssociationTooltip = (type, id) => {
+  if (type !== undefined && id !== undefined) {
+    fieldIdTooltipElem.innerHTML = `${type} ID: ${id}`;
+  } else {
+    fieldIdTooltipElem.innerHTML = '';
+  }
+};
+
+
+const updateCursor = (worldPosition) => {
+  if (lastProcessedActor) {
+    pointerActor.setVisibility(true);
+    pointerActor.setPosition(worldPosition);
+  } else {
+    pointerActor.setVisibility(false);
+  }
+  renderWindow.render();
+  updatePositionTooltip(worldPosition);
+};
