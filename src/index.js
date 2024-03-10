@@ -15,9 +15,14 @@ import vtkFPSMonitor from '@kitware/vtk.js/Interaction/UI/FPSMonitor';
 
 import vtkCellPicker from '@kitware/vtk.js/Rendering/Core/CellPicker';
 import vtkSphereSource from '@kitware/vtk.js/Filters/Sources/SphereSource';
+import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  
+import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
+import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
 
 // import自定义的函数
-import {renderPolyDataByLabel, drawCell} from './render'
+import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell} from './render'
+import { L } from '@kitware/vtk.js/macros2';
+import { obj } from '@kitware/vtk.js/macros';
 
 // import controlPanel from './index.html';
 const controlPanel = `
@@ -69,20 +74,87 @@ fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 // this
 // ----------------------------------------------------------------------------
 
-const coneSource = vtkConeSource.newInstance({
-  center: [0, 500000, 0],
-  height: 1.0,
-});
-var polyData = coneSource.getOutputData()
-polyData.buildCells()
+// const coneSource = vtkConeSource.newInstance({
+//   center: [0, 500000, 0],
+//   height: 1.0,
+// });
+// var polyData = coneSource.getOutputData()
+// polyData.buildCells()
 
 // 读取json文件
-import labelData from '../json/myObject.json';
-console.log('data:', labelData);
+// import labelData from '../json/myObject.json';
+// console.log('data:', labelData);
 
 
+// ----------------------------------------------------------------------------
+// request obj from backend
+// ----------------------------------------------------------------------------
+let polyTeeth = null; 
+let labelTeeth = null;   
+const TeethMapper = vtkMapper.newInstance();
+const TeethActor = vtkActor.newInstance();
+
+
+console.log('downloaing polydata...')
+fetch('http://127.0.0.1:8000/polyData/')  
+  .then(response => response.json())  
+  .then(data => {  
+    // 在这里处理从后端获取的数据 
+    var polyDataString = data['polyData']
+    // console.log('success', data['polyData']); 
+
+    // 创建一个XML reader  
+    var reader = vtkXMLPolyDataReader.newInstance();  
+ 
+    // 将polydata字符串以arraybuffer形式解析
+    const arrayBuffer = base64ToArrayBuffer(polyDataString)
+    // console.log(arrayBuffer)
+    reader.parseAsArrayBuffer(arrayBuffer);  
+
+    // 获取解析后的PolyData对象  
+    polyTeeth = reader.getOutputData(0); 
+    // console.log(polyTeeth.getNumberOfPoints())
+
+    // let b = JSON.parse(JSON.stringify(polyTeeth));
+    polyTeeth.buildCells()
+    labelTeeth = data['labelData']
+
+    // 根据json渲染模型
+    renderPolyDataPointByLabel(polyTeeth, labelTeeth)
+
+    // 连接到actor并渲染
+    TeethActor.setMapper(TeethMapper);
+    TeethMapper.setInputData(polyTeeth);
+    renderer.addActor(TeethActor)
+    renderer.resetCamera();
+    renderWindow.render();
+    // console.log('rendering success')
+
+    
+
+
+  })  
+  .catch(error => {  
+    // 在这里处理发生的错误  
+    console.error('发生错误:', error);  
+  });  
+
+function base64ToArrayBuffer(base64) {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+ 
+
+
+// ----------------------------------------------------------------------------
 // 渲染
-renderPolyDataByLabel(polyData, labelData);
+// ----------------------------------------------------------------------------
+// renderPolyDataByLabel(polyData, labelData);
 // console.log('polydata, labeldata:', polyData, labelData)
 // console.log('scalars:', polyData.getCellData().getScalars().getData())
 
@@ -90,7 +162,7 @@ renderPolyDataByLabel(polyData, labelData);
 const filter = vtkCalculator.newInstance();
 
 // 将filter连接到dataset
-filter.setInputConnection(coneSource.getOutputPort());
+// filter.setInputConnection(coneSource.getOutputPort(0));
 
 
 
@@ -98,14 +170,15 @@ filter.setInputConnection(coneSource.getOutputPort());
 // filter.setFormulaSimple(FieldDataTypes.CELL, [], 'random', () => Math.random());
 
 
-const mapper = vtkMapper.newInstance();
-mapper.setInputConnection(filter.getOutputPort());
+// const mapper = vtkMapper.newInstance();
 
-const actor = vtkActor.newInstance();
-actor.setMapper(mapper);
-actor.setPosition(500000.0, 0.0, 0.0);
+// mapper.setInputData(polyData)
 
-renderer.addActor(actor);
+// const actor = vtkActor.newInstance();
+// actor.setMapper(mapper);
+// actor.setPosition(500000.0, 0.0, 0.0);
+
+// renderer.addActor(actor);
 renderer.resetCamera();
 renderWindow.render();
 fpsMonitor.update();
@@ -120,7 +193,7 @@ const sphereMapper = vtkMapper.newInstance();
 sphereMapper.setInputData(sphere.getOutputData());
 const sphereActor = vtkActor.newInstance();
 sphereActor.setMapper(sphereMapper);
-sphereActor.getProperty().setColor(0.0, 1.0, 0.0);
+sphereActor.getProperty().setColor(1.0, 0.0, 0.0);
 // renderer.addActor(sphereActor);
 
 
@@ -138,7 +211,7 @@ const picker = vtkCellPicker.newInstance();
 picker.setPickFromList(1);
 picker.setTolerance(0);
 picker.initializePickList();
-picker.addPickList(actor);
+picker.addPickList(TeethActor);
 
 
 // Pick on mouse right click
@@ -171,7 +244,7 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
     console.log('Picked cell: ', pickedCellId);
 
     // 编辑cell
-    // drawCell(polyData, pickedCellId, labelData);
+    drawCell(polyTeeth, pickedCellId, labelTeeth);
 
     const pickedPoints = picker.getPickedPositions();
 
@@ -231,7 +304,7 @@ renderWindow.getInteractor().onMouseMove((callData) => {
         console.log('Picked cell: ', pickedCellId);
 
         // 编辑cell
-        drawCell(polyData, pickedCellId, labelData);
+        // drawCell(polyData, pickedCellId, labelData);
 
         const pickedPoints = picker.getPickedPositions();
 
@@ -283,8 +356,8 @@ resolutionChange.addEventListener('input', (e) => {
 // modify objects in your browser's developer console:
 // -----------------------------------------------------------
 
-global.source = coneSource;
-global.mapper = mapper;
-global.actor = actor;
+// global.source = coneSource;
+global.TeethMapper = TeethMapper;
+global.TeethActor = TeethActor;
 global.renderer = renderer;
 global.renderWindow = renderWindow;
