@@ -20,7 +20,7 @@ import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
 import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
 
 // import自定义的函数
-import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell} from './render'
+import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint} from './render'
 import { L } from '@kitware/vtk.js/macros2';
 import { obj } from '@kitware/vtk.js/macros';
 
@@ -244,7 +244,7 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
     console.log('Picked cell: ', pickedCellId);
 
     // 编辑cell
-    drawCell(polyTeeth, pickedCellId, labelTeeth);
+    drawPoint(polyTeeth, pickedCellId, labelTeeth);
 
     const pickedPoints = picker.getPickedPositions();
 

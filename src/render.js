@@ -94,10 +94,12 @@ export function renderPolyDataPointByLabel(polyData, labelData){
     // 遍历points 进行渲染
     for (let pointId = 0; pointId < polyData.getNumberOfPoints(); pointId++){
         if (labelData['labels'][pointId] == 0){
-        emptyArray.insertNextTuple([0.1])
+            // 牙龈
+            emptyArray.insertNextTuple([0.1])
         }
         else{
-        emptyArray.insertNextTuple([0.7])
+            // 牙齿
+            emptyArray.insertNextTuple([0.7])
         }
     }
     // 无需更新array或者polydata，可能连接后自动更新
@@ -106,3 +108,29 @@ export function renderPolyDataPointByLabel(polyData, labelData){
 }
 
 
+// 根据拾取渲染point
+export function drawPoint(polyData, cellId, labelData){
+    // 从polydata的cell获取其点id array
+    var cellPointIds = polyData.getCellPoints(cellId)['cellPointIds']
+    // 获取scalars设置颜色 用dataarray存储颜色标量
+    var emptyArray = polyData.getPointData().getScalars();
+
+    // 改变该cell的点的label
+    for (let pointId of cellPointIds){
+        labelData['labels'][pointId] = 1; 
+        // 编辑的颜色
+        emptyArray.setTuple(pointId,[0.8])
+    }
+    // console.log(labelData)
+
+    // 更新emptyArray
+    emptyArray.dataChange()
+    // emptyArray.modified()
+
+    // 更新polyData
+    polyData.modified()
+
+    // 渲染  
+    // renderWindow.update()
+    renderWindow.render();  
+}
