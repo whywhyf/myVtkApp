@@ -103,6 +103,8 @@ npm build
         - [ ] 如何控制颜色？用标量映射 lookuptable？
         - [ ] 三角化？lodactor？重新画一个 polydata 覆盖在上面？发给后端？
         - [ ] 更新 array 和 polydata 非常耗时，因为需要一路更新到 actor，研究一下能不能直接在 actor 上操作
+        - [ ] 对原polydata的操作必须一路更新到actor，耗时无法避免，弃用该方案，改为创建polydata覆盖 polydatalist已弃用 因为数量多后渲染变慢
+        - [ ] 试试appendpolydata？
         - [ ] 写一下 readme
       - [ ] 最好有撤销和提交的功能
     - [ ] 根据数据重新渲染模型，如改颜色

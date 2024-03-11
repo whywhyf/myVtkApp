@@ -15,7 +15,7 @@ import vtkFPSMonitor from '@kitware/vtk.js/Interaction/UI/FPSMonitor';
 
 import vtkCellPicker from '@kitware/vtk.js/Rendering/Core/CellPicker';
 import vtkSphereSource from '@kitware/vtk.js/Filters/Sources/SphereSource';
-import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  
+import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';
 import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
 import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
 import { FieldAssociations } from '@kitware/vtk.js/Common/DataModel/DataSet/Constants';
@@ -24,9 +24,14 @@ import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 // import自定义的函数
-import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds} from './render'
+import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
 import { L } from '@kitware/vtk.js/macros2';
 import { obj } from '@kitware/vtk.js/macros';
+import vtkSelectionNode from '@kitware/vtk.js/Common/DataModel/SelectionNode';
+import { Filter } from '@kitware/vtk.js/Rendering/OpenGL/Texture/Constants';
+import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
+import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
+import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
 
 // import controlPanel from './index.html';
 const controlPanel = `
@@ -117,59 +122,105 @@ fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 // ----------------------------------------------------------------------------
 // request obj from backend
 // ----------------------------------------------------------------------------
-let polyTeeth = null; 
-let labelTeeth = null; 
-let colorArray = null;  
-const TeethMapper = vtkMapper.newInstance();
-const TeethActor = vtkActor.newInstance();
+let polyTeeth = null;
+let labelTeeth = null;
+let colorArray = null;
+const teethMapper = vtkMapper.newInstance();
+const teethActor = vtkActor.newInstance();
+
+// 用于颜色渲染的filter
+const filter = vtkCalculator.newInstance()
+// console.log(filter)
+
+filter.setFormula({
+  getArrays: (inputDataSets) => ({
+    input: [{ location: FieldDataTypes.COORDINATE }], // Require point coordinates as input
+    output: [
+
+      {
+        location: FieldDataTypes.POINT, // This array will be field data ...
+        name: 'temperature', // ... with the given name ...
+        dataType: 'Float32Array', // ... of this type ...
+        attribute: AttributeTypes.SCALARS, // ... and will be marked as the default scalars.
+        numberOfComponents: 1, // ... with this many components ...
+      },
+    ],
+  }),
+  evaluate: (arraysIn, arraysOut) => {
+    // Convert in the input arrays of vtkDataArrays into variables
+    // referencing the underlying JavaScript typed-data arrays:
+    const [coords] = arraysIn.map((d) => d.getData());
+    const [temp] = arraysOut.map((d) => d.getData());
+
+    // Since we are passed coords as a 3-component array,
+    // loop over all the points and compute the point-data output:
+    // console.log(1)
+    for (let i = 0, sz = coords.length / 3; i < sz; ++i) {
+
+      if (labelTeeth != null) {
+        if (labelTeeth['labels'][i] == 0) {
+          temp[i] = 0.2
+        } else {
+          temp[i] = 0.8
+        }
+      }
+
+    }
+    // Mark the output vtkDataArray as modified
+    arraysOut.forEach((x) => x.modified());
+  },
+});
 
 
 console.log('downloaing polydata...')
-fetch('http://127.0.0.1:8000/polyData/')  
-  .then(response => response.json())  
-  .then(data => {  
+fetch('http://127.0.0.1:8000/polyData/')
+  .then(response => response.json())
+  .then(data => {
     // 在这里处理从后端获取的数据 
     var polyDataString = data['polyData']
     // console.log('success', data['polyData']); 
 
     // 创建一个XML reader  
-    var reader = vtkXMLPolyDataReader.newInstance();  
- 
+    var reader = vtkXMLPolyDataReader.newInstance();
+
     // 将polydata字符串以arraybuffer形式解析
     const arrayBuffer = base64ToArrayBuffer(polyDataString)
     // console.log(arrayBuffer)
-    reader.parseAsArrayBuffer(arrayBuffer);  
+    reader.parseAsArrayBuffer(arrayBuffer);
 
     // 获取解析后的PolyData对象  
-    polyTeeth = reader.getOutputData(0); 
+    polyTeeth = reader.getOutputData(0);
     // console.log(polyTeeth.getNumberOfPoints())
-
+    global.polyTeeth = polyTeeth
     // let b = JSON.parse(JSON.stringify(polyTeeth));
     if (!polyTeeth.getCells()) {
       polyTeeth.buildCells();
     }
     labelTeeth = data['labelData']
+    // console.log(labelTeeth)
 
     // 根据json渲染模型
-    renderPolyDataPointByLabel(polyTeeth, labelTeeth)
-    colorArray = polyTeeth.getPointData().getScalars();
+    // renderPolyDataPointByLabel(polyTeeth, labelTeeth)
+    // colorArray = polyTeeth.getPointData().getScalars();
+
 
     // 连接到actor并渲染
-    TeethActor.setMapper(TeethMapper);
-    TeethMapper.setInputData(polyTeeth);
-    renderer.addActor(TeethActor)
+    filter.setInputData(polyTeeth)
+    teethActor.setMapper(teethMapper);
+    teethMapper.setInputConnection(filter.getOutputPort());
+    renderer.addActor(teethActor)
     renderer.resetCamera();
     renderWindow.render();
-    // console.log('rendering success')
-
-    
+    console.log('rendering success')
 
 
-  })  
-  .catch(error => {  
-    // 在这里处理发生的错误  
-    console.error('发生错误:', error);  
-  });  
+
+
+  })
+// .catch(error => {  
+//   // 在这里处理发生的错误  
+//   console.error('发生错误:', error);  
+// });  
 
 
 // 将base64编码的字符串编码为arraybuffer
@@ -178,11 +229,11 @@ function base64ToArrayBuffer(base64) {
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes.buffer;
 }
- 
+
 
 renderer.resetCamera();
 renderWindow.render();
@@ -231,11 +282,11 @@ let isRightMousePressed = false;
 // Setup picking interaction
 // ----------------------------------------------------------------------------
 // Only try to pick cone
-const picker = vtkCellPicker.newInstance();
-picker.setPickFromList(1);
-picker.setTolerance(0);
-picker.initializePickList();
-picker.addPickList(TeethActor);
+// const picker = vtkCellPicker.newInstance();
+// picker.setPickFromList(1);
+// picker.setTolerance(0);
+// picker.initializePickList();
+// picker.addPickList(TeethActor);
 
 
 // Pick on mouse right click
@@ -281,7 +332,7 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
     // sphereActor.setMapper(sphereMapper);
     renderer.addActor(sphereActor);
     // datascoure数据更新时，只需更新到mapper的连接，再addactor,其余可在初始化时设置好
-    
+
   }
   renderWindow.render();
 });
@@ -290,48 +341,6 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
 
 
 
-
-// Pick on mouse move
-// renderWindow.getInteractor().onMouseMove((callData) => {
-//   return;
-//   if (renderer !== callData.pokedRenderer) {
-//     return;
-//   }
-
-//   if (isRightMousePressed == false){ 
-
-//   }
-//   else{
-//       const pos = callData.position;
-//       const point = [pos.x, pos.y, 0.0];
-//       console.log(`Pick at: ${point}`);
-//       picker.pick(point, renderer);
-
-//       if (picker.getActors().length === 0) {
-
-//       }
-//       else{
-//         const pickedCellId = picker.getCellId();
-//         console.log('Picked cell: ', pickedCellId);
-
-//         // 编辑cell
-//         // drawCell(polyData, pickedCellId, labelData);
-
-//         const pickedPoints = picker.getPickedPositions();
-
-//         // 更新球体位置
-//         const pickedPoint = pickedPoints[0];
-//         console.log(`Picked: ${pickedPoint}`);
-//         sphere.setCenter(pickedPoint);
-//         sphere.setRadius(0.01);
-//         sphereMapper.setInputData(sphere.getOutputData());
-//         sphereActor.setMapper(sphereMapper);
-//         renderer.addActor(sphereActor);
-//   }
-
-//   }
-//   renderWindow.render();
-// });
 
 
 // Pick on mouse release
@@ -368,8 +377,9 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 // -----------------------------------------------------------
 
 // global.source = coneSource;
-global.TeethMapper = TeethMapper;
-global.TeethActor = TeethActor;
+global.polyTeeth = polyTeeth;
+global.teethMapper = teethMapper;
+global.teethActor = teethActor;
 global.renderer = renderer;
 global.renderWindow = renderWindow;
 
@@ -388,35 +398,48 @@ const pointerActor = vtkActor.newInstance();
 pointerActor.setMapper(pointerMapper);
 pointerMapper.setInputConnection(pointerSource.getOutputPort());
 
+
+// ----------------------------------------------------------------------------
+// Create pick face indicater
+// ----------------------------------------------------------------------------
+const polyFace = vtkPolyData.newInstance()
+global.polyFace = polyFace
+const faceMapper = vtkMapper.newInstance();
+const faceActor = vtkActor.newInstance();
+faceActor.setMapper(faceMapper);
+
+
+// renderer.addActor(faceActor)
+
 // -----------------------------------------------------------
 // selection by hardware
 // -----------------------------------------------------------
 
 // 在鼠标事件上进行拾取的函数  
-function pickOnMouseEvent(event) {  
-  if (interactor.isAnimating()) {  
+function pickOnMouseEvent(event) {
+  if (interactor.isAnimating()) {
     // 在场景交互期间阻止拾取  
-    return;  
-  }  
-  const [x, y] = eventToWindowXY(event);  
-  
+    return;
+  }
+  const [x, y] = eventToWindowXY(event);
+
   // 隐藏指针角色并启动基于硬件的拾取  
   // pointerActor.setVisibility(false);  
-  hardwareSelector.getSourceDataAsync(renderer, x, y, x, y).then((result) => {  
-    if (result) {  
-      processSelections(result.generateSelection(x, y, x, y));  
-    } else {  
-      processSelections(null);  
-    }  
-  });  
-} 
+  hardwareSelector.getSourceDataAsync(renderer, x, y, x, y).then((result) => {
+    if (result) {
+      processSelections(result.generateSelection(x, y, x, y));
+    } else {
+      processSelections(null);
+    }
+  });
+}
 
 // 限制鼠标事件处理的频率以提高性能
 const throttleMouseHandler = throttle(pickOnMouseEvent, 20);
 // 添加鼠标移动的事件监听器 
 document.addEventListener('mousemove', throttleMouseHandler);
 
-
+// document.addEventListener('contextmenu', throttleMouseHandler);
 // ----------------------------------------------------------------------------
 // Create Mouse listener for picking on mouse move
 // ----------------------------------------------------------------------------
@@ -447,6 +470,11 @@ function processSelections(selections) {
 
   // 从第一个选择中提取属性
   // 此时已选中目标
+  // console.log(selections.length)
+  // let i = 0;
+  // for (let i = 0;i<selections.length;i++){
+  //   if (selections[i].getProperties().compositeID==1){console.log('ok');return}
+  // }
   const {
     worldPosition: rayHitWorldPosition,
     compositeID,
@@ -500,10 +528,37 @@ function processSelections(selections) {
         const pointIds = cellPoints.cellPointIds;
 
         // 如果此时有按下右键，根据pointids更新渲染
-        if (isRightMousePressed){
+        if (isRightMousePressed) {
+          // 如果获取到了这个指示器，就不要新建指示器
+          if (pointIds[0] == 0 || pointIds[0] == 1 || pointIds[0] == 2) { return }
+
+          // 获取points的坐标
+          let num = 0
+          const facePoints = []
+          const faceLines = [2, 0, 1, 2, 0, 2, 2, 1, 2]
+          for (let pointId of pointIds) {
+            const xyz = polyTeeth.getPoints().getPoint(pointId)
+            facePoints.push(xyz[0], xyz[1], xyz[2])
+
+          }
+          // console.log('pointids', pointIds)
+
+
+
+
+          // 创建一个新的polydata并覆盖在模型上
+          // const polyFace = vtkPolyData.newInstance()
+          polyFace.getPoints().setData(Float32Array.from(facePoints), 3);
+          polyFace.getLines().setData(Uint16Array.from(faceLines));
+          // console.log('facepoints', facePoints)
+          // polyFace.buildCells()
+          polyFace.modified()
+          // teethActor.setVisibility(false)
+          faceMapper.setInputData(polyFace)
+          renderer.addActor(faceActor)
           drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
         }
-        
+
         // Find the closest cell point, and use that as cursor position
         const points = Array.from(pointIds).map((pointId) =>
           input.getPoints().getPoint(pointId)

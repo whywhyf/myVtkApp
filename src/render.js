@@ -140,18 +140,18 @@ export function drawPoint(polyData, cellId, labelData){
 export function drawPointbyPointIds(polyData, pointIds, labelData){
 
     // 获取scalars设置颜色 用dataarray存储颜色标量
-    var emptyArray = polyData.getPointData().getScalars();
+    // var emptyArray = polyData.getPointData().getScalars();
 
     // 改变该cell的点的label
     for (let pointId of pointIds){
         labelData['labels'][pointId] = 1; 
         // 编辑的颜色
-        emptyArray.setTuple(pointId,[0.8])
+        // emptyArray.setTuple(pointId,[0.8])
     }
     // console.log(labelData)
 
     // 更新emptyArray
-    emptyArray.dataChange()
+    // emptyArray.dataChange()
     // emptyArray.modified()
 
     // 更新polyData
