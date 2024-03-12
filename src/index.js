@@ -549,7 +549,7 @@ function processSelections(selections) {
             commandOldValueArray.push(labelTeeth['labels'][pointId])
             commandNewValueArray.push(1)
             // 更新
-            labelTeeth['labels'][pointId] = 1;
+            labelTeeth['labels'][pointId] = penType;
           }
 
         }
@@ -696,6 +696,21 @@ document.querySelector('.redo').addEventListener('click', () => {
   updateControlPanel()
   console.log('redo!')
 })
+
+
+// ----------------------------------------------------------------------------
+// 切换画笔
+// ----------------------------------------------------------------------------
+const PenType = {
+  Teeth: 1,
+  Gums: 0
+}
+let penType = PenType.Teeth
+document.querySelector('.switch').addEventListener('click', () => {
+  penType = 1- penType
+  console.log('switch!')
+})
+
 
 
 // ----------------------------------------------------------------------------
