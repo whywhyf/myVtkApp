@@ -23,6 +23,7 @@ import vtkMath, { float2CssRGBA } from '@kitware/vtk.js/Common/Core/Math';
 import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
+import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
 // import自定义的函数
 import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
 import { commitHandler } from './control'
@@ -39,6 +40,7 @@ import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
 
 import controlPanel from './controlPanel.html';
+import vtkLight from '@kitware/vtk.js/Rendering/Core/Light';
 
 
 // ----------------------------------------------------------------------------
@@ -73,6 +75,8 @@ const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
 });
 const renderer = fullScreenRenderer.getRenderer();
 const renderWindow = fullScreenRenderer.getRenderWindow();
+renderer.setBackground(249 / 255, 205 / 255, 173 / 255)
+
 
 const fpsMonitor = vtkFPSMonitor.newInstance();
 const fpsElm = fpsMonitor.getFpsMonitorContainer();
@@ -87,14 +91,24 @@ fpsMonitor.setRenderWindow(renderWindow);
 
 fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 
+// ----------------------------------------------------------------------------
+// 创建灯光
+// ----------------------------------------------------------------------------
+const light = vtkLight.newInstance()
+light.setColor(0.5, 0.5, 0.5)
+light.setLightTypeToCameraLight()
+light.setPosition(80, 80, 80)
+renderer.addLight(light)
 
-
+// ----------------------------------------------------------------------------
+// 创建镜头
+// ----------------------------------------------------------------------------
+const camera = renderer.getActiveCamera()
 
 // ----------------------------------------------------------------------------
 // 创建命令实例和命令管理器实例
 // ----------------------------------------------------------------------------
 const commandAdmin = new CommandAdmin()
-
 global.commandAdmin = commandAdmin
 // global.labelCommand = labelCommand
 const commandIndexArray = []
@@ -108,7 +122,7 @@ const commandNewValueArray = []
 let polyTeeth = null;
 let labelTeeth = null;
 let labelTeethOrigin = null;
-let colorArray = null;
+let colorsArray = null;
 const teethMapper = vtkMapper.newInstance();
 const teethActor = vtkActor.newInstance();
 
@@ -123,10 +137,10 @@ filter.setFormula({
 
       {
         location: FieldDataTypes.POINT, // This array will be field data ...
-        name: 'temperature', // ... with the given name ...
-        dataType: 'Float32Array', // ... of this type ...
+        name: 'color', // ... with the given name ...
+        dataType: 'Uint8Array', // ... of this type ...
         attribute: AttributeTypes.SCALARS, // ... and will be marked as the default scalars.
-        numberOfComponents: 1, // ... with this many components ...
+        numberOfComponents: 3, // ... with this many components ...
       },
     ],
   }),
@@ -143,9 +157,18 @@ filter.setFormula({
 
       if (labelTeeth != null) {
         if (labelTeeth['labels'][i] == 0) {
-          temp[i] = 0.2
+          // 肉色250, 210, 185
+          // 	241, 191, 153
+          // 241, 169, 153
+          temp[i * 3] = 241
+          temp[i * 3 + 1] = 169
+          temp[i * 3 + 2] = 153
         } else {
-          temp[i] = 0.8
+          // 白色255，255，255
+          // 252, 248, 239
+          temp[i * 3] = 252
+          temp[i * 3 + 1] = 248
+          temp[i * 3 + 2] = 239
         }
       }
 
@@ -183,7 +206,9 @@ fetch('http://127.0.0.1:8000/polyData/')
     labelTeeth = data['labelData']
     labelTeethOrigin = { ...labelTeeth }
     // console.log(labelTeeth)
-
+    addColor(polyTeeth)
+    colorsArray = polyTeeth.getPointData().getScalars().getData()
+    // console.log(colorsArray)
     // 根据json渲染模型
     // renderPolyDataPointByLabel(polyTeeth, labelTeeth)
     // colorArray = polyTeeth.getPointData().getScalars();
@@ -207,6 +232,28 @@ fetch('http://127.0.0.1:8000/polyData/')
 //   console.error('发生错误:', error);  
 // });  
 
+// rgb颜色
+function addColor(ds) {
+  const size = ds.getPoints().getData().length;
+  const rgbArray = new Uint8Array(size);
+  let offset = 0;
+
+
+  // while (offset < size) {
+  //   rgbArray[offset++] = r;
+  //   rgbArray[offset++] = g;
+  //   rgbArray[offset++] = b;
+  // }
+
+
+  ds.getPointData().setScalars(
+    vtkDataArray.newInstance({
+      name: 'color',
+      numberOfComponents: 3,
+      values: rgbArray,
+    })
+  );
+}
 
 // 将base64编码的字符串编码为arraybuffer
 function base64ToArrayBuffer(base64) {
@@ -332,10 +379,38 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
 // Pick on mouse release
 renderWindow.getInteractor().onRightButtonRelease((callData) => {
   isRightMousePressed = false;
+  if (canCommit) {
+    // 更新渲染
+    allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+
+    // 记录操作
+    const labelCommand = new LabelCommand(labelTeeth['labels'])
+    global.labelCommand = labelCommand
+    labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
+    commandIndexArray.length = 0
+    commandOldValueArray.length = 0
+    commandNewValueArray.length = 0
+    commandAdmin.pushCommand(labelCommand)
+
+    // 更新panel
+    canCommit = false
+    updateControlPanel()
+    console.log('commit!')
+  }
 });
 
-
-
+// ----------------------------------------------------------------------------
+// 鼠标中键事件
+// ----------------------------------------------------------------------------
+let isMiddleMousePressed = false
+// 按下
+renderWindow.getInteractor().onMiddleButtonPress((callData) => {
+  isMiddleMousePressed = true
+})
+// 释放
+renderWindow.getInteractor().onMiddleButtonRelease((callData) => {
+  isMiddleMousePressed = false
+})
 
 
 
@@ -654,24 +729,24 @@ updateControlPanel()
 // ----------------------------------------------------------------------------
 // 提交目前的操作并清理内存
 // ----------------------------------------------------------------------------
-document.querySelector('.commit').addEventListener('click', () => {
-  // 更新渲染
-  allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+// document.querySelector('.commit').addEventListener('click', () => {
+//   // 更新渲染
+//   allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
 
-  // 记录操作
-  const labelCommand = new LabelCommand(labelTeeth['labels'])
-  global.labelCommand = labelCommand
-  labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
-  commandIndexArray.length = 0
-  commandOldValueArray.length = 0
-  commandNewValueArray.length = 0
-  commandAdmin.pushCommand(labelCommand)
+//   // 记录操作
+//   const labelCommand = new LabelCommand(labelTeeth['labels'])
+//   global.labelCommand = labelCommand
+//   labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
+//   commandIndexArray.length = 0
+//   commandOldValueArray.length = 0
+//   commandNewValueArray.length = 0
+//   commandAdmin.pushCommand(labelCommand)
 
-  // 更新panel
-  canCommit = false
-  updateControlPanel()
-  console.log('commit!')
-})
+//   // 更新panel
+//   canCommit = false
+//   updateControlPanel()
+//   console.log('commit!')
+// })
 
 
 // ----------------------------------------------------------------------------
@@ -706,8 +781,18 @@ const PenType = {
   Gums: 0
 }
 let penType = PenType.Teeth
+faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
 document.querySelector('.switch').addEventListener('click', () => {
-  penType = 1- penType
+  penType = 1 - penType
+  if (penType == 0) {
+    // console.log('change!')
+    faceActor.getProperty().setColor(241 / 255, 169 / 255, 153 / 255)
+  } else {
+    // console.log('change!')
+    faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
+  }
+  // console.log(penType)
+  // console.log(faceActor.getProperty().getColor())
   console.log('switch!')
 })
 
@@ -717,13 +802,13 @@ document.querySelector('.switch').addEventListener('click', () => {
 // 更新panel
 // ----------------------------------------------------------------------------
 function updateControlPanel() {
-  if (canCommit) {
-    commitButton.disabled = false
-    commitButton.style.backgroundColor = "#4CAF50";
-  } else {
-    commitButton.disabled = true
-    commitButton.style.backgroundColor = "gray";
-  }
+  // if (canCommit) {
+  //   commitButton.disabled = false
+  //   commitButton.style.backgroundColor = "#4CAF50";
+  // } else {
+  //   commitButton.disabled = true
+  //   commitButton.style.backgroundColor = "gray";
+  // }
   if (commandAdmin.canUndo) {
     undoButton.disabled = false
     undoButton.style.backgroundColor = "#4CAF50";
