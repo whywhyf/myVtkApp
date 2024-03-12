@@ -32,6 +32,7 @@ import { Filter } from '@kitware/vtk.js/Rendering/OpenGL/Texture/Constants';
 import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
 import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
 import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
+import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
 
 // import controlPanel from './index.html';
 const controlPanel = `
@@ -251,6 +252,7 @@ const apiSpecificRenderWindow = interactor.getView();
 // Create hardware selector
 // ----------------------------------------------------------------------------
 const hardwareSelector = apiSpecificRenderWindow.getSelector();
+global.hardwareSelector = hardwareSelector
 hardwareSelector.setCaptureZValues(true);
 // TODO: bug in FIELD_ASSOCIATION_POINTS mode
 // hardwareSelector.setFieldAssociation(
@@ -408,6 +410,8 @@ const faceMapper = vtkMapper.newInstance();
 const faceActor = vtkActor.newInstance();
 faceActor.setMapper(faceMapper);
 
+const allPolyFace = vtkAppendPolyData.newInstance()
+
 
 // renderer.addActor(faceActor)
 
@@ -530,16 +534,19 @@ function processSelections(selections) {
         // 如果此时有按下右键，根据pointids更新渲染
         if (isRightMousePressed) {
           // 如果获取到了这个指示器，就不要新建指示器
-          if (pointIds[0] == 0 || pointIds[0] == 1 || pointIds[0] == 2) { return }
-
+          if (propID != 2 && propID != 1) { return }
+          if (pointIds.length < 3) { return }
+          // console.log('points', pointIds)
+          // console.log('hardware', hardwareSelector.getCurrentPass())
           // 获取points的坐标
           let num = 0
           const facePoints = []
-          const faceLines = [2, 0, 1, 2, 0, 2, 2, 1, 2]
+          // const faceLines = [2, 0, 1, 2, 0, 2, 2, 1, 2]
+          const facePolys = [pointIds.length]
           for (let pointId of pointIds) {
             const xyz = polyTeeth.getPoints().getPoint(pointId)
-            facePoints.push(xyz[0], xyz[1], xyz[2])
-
+            facePoints.push(xyz[0], xyz[1] - 0.01, xyz[2])
+            facePolys.push(num++)
           }
           // console.log('pointids', pointIds)
 
@@ -547,16 +554,18 @@ function processSelections(selections) {
 
 
           // 创建一个新的polydata并覆盖在模型上
-          // const polyFace = vtkPolyData.newInstance()
+          const polyFace = vtkPolyData.newInstance()
           polyFace.getPoints().setData(Float32Array.from(facePoints), 3);
-          polyFace.getLines().setData(Uint16Array.from(faceLines));
+          // polyFace.getLines().setData(Uint16Array.from(faceLines));
+          polyFace.getPolys().setData(Uint32Array.from(facePolys));
           // console.log('facepoints', facePoints)
           // polyFace.buildCells()
           polyFace.modified()
+          allPolyFace.addInputData(polyFace)
           // teethActor.setVisibility(false)
-          faceMapper.setInputData(polyFace)
+          faceMapper.setInputConnection(allPolyFace.getOutputPort())
           renderer.addActor(faceActor)
-          drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+          // drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
         }
 
         // Find the closest cell point, and use that as cursor position
