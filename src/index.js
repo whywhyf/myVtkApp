@@ -25,6 +25,8 @@ import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 // import自定义的函数
 import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
+import { commitHandler } from './control'
+
 import { L } from '@kitware/vtk.js/macros2';
 import { obj } from '@kitware/vtk.js/macros';
 import vtkSelectionNode from '@kitware/vtk.js/Common/DataModel/SelectionNode';
@@ -34,25 +36,25 @@ import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
 import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
 
-// import controlPanel from './index.html';
-const controlPanel = `
-<table>
-  <tr>
-    <td>
-      <select class="representations" style="width: 100%">
-        <option value="0">Points</option>
-        <option value="1">Wireframe</option>
-        <option value="2" selected>Surface</option>
-      </select>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <input class="resolution" type="range" min="4" max="80" value="6" />
-    </td>
-  </tr>
-</table>
-`;
+import controlPanel from './controlPanel.html';
+// const controlPanel = `
+// <table>
+//   <tr>
+//     <td>
+//       <select class="representations" style="width: 100%">
+//         <option value="0">Points</option>
+//         <option value="1">Wireframe</option>
+//         <option value="2" selected>Surface</option>
+//       </select>
+//     </td>
+//   </tr>
+//   <tr>
+//     <td>
+//       <input class="resolution" type="range" min="4" max="80" value="6" />
+//     </td>
+//   </tr>
+// </table>
+// `;
 
 
 // ----------------------------------------------------------------------------
@@ -61,7 +63,7 @@ const controlPanel = `
 const tooltipsElem = document.createElement('div');
 tooltipsElem.style.position = 'absolute';
 tooltipsElem.style.top = 0;
-tooltipsElem.style.left = 0;
+tooltipsElem.style.right = 0;
 tooltipsElem.style.padding = '10px';
 tooltipsElem.style.zIndex = 1;
 tooltipsElem.style.background = 'white';
@@ -82,6 +84,7 @@ document.querySelector('body').appendChild(tooltipsElem);
 // ----------------------------------------------------------------------------
 
 const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
+  rootContainer: document.body,
   background: [0, 0, 0],
 });
 const renderer = fullScreenRenderer.getRenderer();
@@ -355,7 +358,7 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 // UI control handling
 // -----------------------------------------------------------
 
-// fullScreenRenderer.addController(controlPanel);
+fullScreenRenderer.addController(controlPanel);
 // const representationSelector = document.querySelector('.representations');
 // const resolutionChange = document.querySelector('.resolution');
 
@@ -409,8 +412,10 @@ global.polyFace = polyFace
 const faceMapper = vtkMapper.newInstance();
 const faceActor = vtkActor.newInstance();
 faceActor.setMapper(faceMapper);
+const polyFaceList = []
 
-const allPolyFace = vtkAppendPolyData.newInstance()
+let allPolyFace = vtkAppendPolyData.newInstance()
+global.allPolyFace = allPolyFace
 
 
 // renderer.addActor(faceActor)
@@ -560,12 +565,14 @@ function processSelections(selections) {
           polyFace.getPolys().setData(Uint32Array.from(facePolys));
           // console.log('facepoints', facePoints)
           // polyFace.buildCells()
-          polyFace.modified()
+          // polyFace.modified()
+          // polyFaceList.push(polyFace)
           allPolyFace.addInputData(polyFace)
           // teethActor.setVisibility(false)
           faceMapper.setInputConnection(allPolyFace.getOutputPort())
           renderer.addActor(faceActor)
-          // drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+          drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+
         }
 
         // Find the closest cell point, and use that as cursor position
@@ -653,3 +660,11 @@ const updateCursor = (worldPosition) => {
   renderWindow.render();
   updatePositionTooltip(worldPosition);
 };
+
+
+// ----------------------------------------------------------------------------
+// 提交目前的操作并清理内存
+// ----------------------------------------------------------------------------
+document.querySelector('.commit').addEventListener('click', () => {
+  allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+})
