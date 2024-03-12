@@ -104,10 +104,11 @@ npm build
         - [x] 三角化？lodactor？重新画一个 polydata 覆盖在上面？发给后端？
         - [x] 更新 array 和 polydata 非常耗时，因为需要一路更新到 actor，研究一下能不能直接在 actor 上操作 不行
         - [x] 对原polydata的操作必须一路更新到actor，耗时无法避免，弃用该方案，改为创建polydata覆盖 polydatalist已弃用 因为数量多后渲染变慢
-        - [x] 试试appendpolydata？使用appendpolydata实现操作，要注意释放内存
+        - [x] 试试appendpolydata？使用appendpolydata实现操作，要注意释放内存,
+        - [ ] 把polyface的const改成let？
         - [ ] 后期试试用描框批量选中cell
         - [ ] 写一下 readme
-      - [ ] 最好有撤销和提交的功能
+      - [x] 最好有撤销和提交的功能
     - [ ] 根据数据重新渲染模型，如改颜色
   - [ ] 2 对碰撞点最近的点更改数据 vtkPointPicker  
     - [ ] 获取离射线或碰撞点最近的点 id

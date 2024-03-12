@@ -19,15 +19,17 @@ import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';
 import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
 import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
 import { FieldAssociations } from '@kitware/vtk.js/Common/DataModel/DataSet/Constants';
-import vtkMath from '@kitware/vtk.js/Common/Core/Math';
+import vtkMath, { float2CssRGBA } from '@kitware/vtk.js/Common/Core/Math';
 import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 // import自定义的函数
 import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
 import { commitHandler } from './control'
+import { LabelCommand, CommandAdmin } from './control'
 
-import { L } from '@kitware/vtk.js/macros2';
+
+import { I, L } from '@kitware/vtk.js/macros2';
 import { obj } from '@kitware/vtk.js/macros';
 import vtkSelectionNode from '@kitware/vtk.js/Common/DataModel/SelectionNode';
 import { Filter } from '@kitware/vtk.js/Rendering/OpenGL/Texture/Constants';
@@ -37,24 +39,6 @@ import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
 
 import controlPanel from './controlPanel.html';
-// const controlPanel = `
-// <table>
-//   <tr>
-//     <td>
-//       <select class="representations" style="width: 100%">
-//         <option value="0">Points</option>
-//         <option value="1">Wireframe</option>
-//         <option value="2" selected>Surface</option>
-//       </select>
-//     </td>
-//   </tr>
-//   <tr>
-//     <td>
-//       <input class="resolution" type="range" min="4" max="80" value="6" />
-//     </td>
-//   </tr>
-// </table>
-// `;
 
 
 // ----------------------------------------------------------------------------
@@ -103,24 +87,19 @@ fpsMonitor.setRenderWindow(renderWindow);
 
 fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 
-// ----------------------------------------------------------------------------
-// Example code
-// ----------------------------------------------------------------------------
-// create a filter on the fly, sort of cool, this is a random scalars
-// filter we create inline, for a simple cone you would not need
-// this
-// ----------------------------------------------------------------------------
 
-// const coneSource = vtkConeSource.newInstance({
-//   center: [0, 500000, 0],
-//   height: 1.0,
-// });
-// var polyData = coneSource.getOutputData()
-// polyData.buildCells()
 
-// 读取json文件
-// import labelData from '../json/myObject.json';
-// console.log('data:', labelData);
+
+// ----------------------------------------------------------------------------
+// 创建命令实例和命令管理器实例
+// ----------------------------------------------------------------------------
+const commandAdmin = new CommandAdmin()
+
+global.commandAdmin = commandAdmin
+// global.labelCommand = labelCommand
+const commandIndexArray = []
+const commandOldValueArray = []
+const commandNewValueArray = []
 
 
 // ----------------------------------------------------------------------------
@@ -128,6 +107,7 @@ fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 // ----------------------------------------------------------------------------
 let polyTeeth = null;
 let labelTeeth = null;
+let labelTeethOrigin = null;
 let colorArray = null;
 const teethMapper = vtkMapper.newInstance();
 const teethActor = vtkActor.newInstance();
@@ -201,6 +181,7 @@ fetch('http://127.0.0.1:8000/polyData/')
       polyTeeth.buildCells();
     }
     labelTeeth = data['labelData']
+    labelTeethOrigin = { ...labelTeeth }
     // console.log(labelTeeth)
 
     // 根据json渲染模型
@@ -354,27 +335,10 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 });
 
 
-// -----------------------------------------------------------
-// UI control handling
-// -----------------------------------------------------------
 
-fullScreenRenderer.addController(controlPanel);
-// const representationSelector = document.querySelector('.representations');
-// const resolutionChange = document.querySelector('.resolution');
 
-// representationSelector.addEventListener('change', (e) => {
-//   const newRepValue = Number(e.target.value);
-//   actor.getProperty().setRepresentation(newRepValue);
-//   renderWindow.render();
-//   fpsMonitor.update();
-// });
 
-// resolutionChange.addEventListener('input', (e) => {
-//   const resolution = Number(e.target.value);
-//   coneSource.setResolution(resolution);
-//   renderWindow.render();
-//   fpsMonitor.update();
-// });
+
 
 // -----------------------------------------------------------
 // Make some variables global so that you can inspect and
@@ -568,10 +532,25 @@ function processSelections(selections) {
           // polyFace.modified()
           // polyFaceList.push(polyFace)
           allPolyFace.addInputData(polyFace)
+          if (canCommit == false) {
+            canCommit = true
+            updateControlPanel()
+          }
+
           // teethActor.setVisibility(false)
           faceMapper.setInputConnection(allPolyFace.getOutputPort())
           renderer.addActor(faceActor)
-          drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+          // drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+
+          // 更新labels
+          for (let pointId of pointIds) {
+            // 记录操作
+            commandIndexArray.push(pointId)
+            commandOldValueArray.push(labelTeeth['labels'][pointId])
+            commandNewValueArray.push(1)
+            // 更新
+            labelTeeth['labels'][pointId] = 1;
+          }
 
         }
 
@@ -662,9 +641,86 @@ const updateCursor = (worldPosition) => {
 };
 
 
+// -----------------------------------------------------------
+// UI control handling
+// -----------------------------------------------------------
+fullScreenRenderer.addController(controlPanel);
+const commitButton = document.getElementById('commit');
+const undoButton = document.getElementById('undo');
+const redoButton = document.getElementById('redo');
+global.undoButton = undoButton
+let canCommit = false
+updateControlPanel()
 // ----------------------------------------------------------------------------
 // 提交目前的操作并清理内存
 // ----------------------------------------------------------------------------
 document.querySelector('.commit').addEventListener('click', () => {
+  // 更新渲染
   allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+
+  // 记录操作
+  const labelCommand = new LabelCommand(labelTeeth['labels'])
+  global.labelCommand = labelCommand
+  labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
+  commandIndexArray.length = 0
+  commandOldValueArray.length = 0
+  commandNewValueArray.length = 0
+  commandAdmin.pushCommand(labelCommand)
+
+  // 更新panel
+  canCommit = false
+  updateControlPanel()
+  console.log('commit!')
 })
+
+
+// ----------------------------------------------------------------------------
+// 撤销目前的操作并清理内存
+// ----------------------------------------------------------------------------
+document.querySelector('.undo').addEventListener('click', () => {
+  commandAdmin.undoCommand()
+  polyTeeth.modified()
+  renderWindow.render()
+  updateControlPanel()
+  console.log('undo!')
+})
+
+
+// ----------------------------------------------------------------------------
+// redo目前的操作并清理内存
+// ----------------------------------------------------------------------------
+document.querySelector('.redo').addEventListener('click', () => {
+  commandAdmin.redoCommand()
+  polyTeeth.modified()
+  renderWindow.render()
+  updateControlPanel()
+  console.log('redo!')
+})
+
+
+// ----------------------------------------------------------------------------
+// 更新panel
+// ----------------------------------------------------------------------------
+function updateControlPanel() {
+  if (canCommit) {
+    commitButton.disabled = false
+    commitButton.style.backgroundColor = "#4CAF50";
+  } else {
+    commitButton.disabled = true
+    commitButton.style.backgroundColor = "gray";
+  }
+  if (commandAdmin.canUndo) {
+    undoButton.disabled = false
+    undoButton.style.backgroundColor = "#4CAF50";
+  } else {
+    undoButton.disabled = true
+    undoButton.style.backgroundColor = "gray";
+  }
+  if (commandAdmin.canRedo) {
+    redoButton.disabled = false
+    redoButton.style.backgroundColor = "#4CAF50";
+  } else {
+    redoButton.disabled = true
+    redoButton.style.backgroundColor = "gray";
+  }
+}
