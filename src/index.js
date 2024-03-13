@@ -24,6 +24,8 @@ import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
 import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
+import { vec3 } from 'gl-matrix';
+import vtkCoordinate from '@kitware/vtk.js//Rendering/Core/Coordinate'
 // import自定义的函数
 import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
 import { commitHandler } from './control'
@@ -403,16 +405,73 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 // 鼠标中键事件
 // ----------------------------------------------------------------------------
 let isMiddleMousePressed = false
+let lastMouseX = null
+let lastMouseY = null
+
 // 按下
 renderWindow.getInteractor().onMiddleButtonPress((callData) => {
+  lastMouseX = callData.position.x;
+  lastMouseY = callData.position.y
   isMiddleMousePressed = true
 })
+
 // 释放
 renderWindow.getInteractor().onMiddleButtonRelease((callData) => {
   isMiddleMousePressed = false
 })
 
+// 按住
+renderWindow.getInteractor().onMouseMove((callData) => {
+  if (isMiddleMousePressed) {
+    let mouseX = callData.position.x;
+    let mouseY = callData.position.y;
+    // let deltaX = -(mouseX - lastMouseX)
+    // let deltaY = mouseY - lastMouseY
+    // let sensitivity = 0.01
+    let focalPos = camera.getFocalPoint()
+    let camPos = camera.getPosition()
+    global.focalPos = focalPos
+    global.camPos = camPos
+    // console.log('cameramove from', focalPos)
 
+    // 转换为世界坐标  
+    // 创建一个vtkCoordinate对象  
+    var selectionPt = vtkCoordinate.newInstance();
+
+    // 将坐标系统设置为显示坐标系  
+    selectionPt.setCoordinateSystemToDisplay();
+
+    // 设置新鼠标坐标值  
+    selectionPt.setValue(mouseX, mouseY, 0); // mouseX 和 mouseY 是鼠标的二维坐标  
+
+    // 获取转换后的新坐标  
+    var newWorldCoords = selectionPt.getComputedWorldValue(renderer);
+
+    // console.log('world', newWorldCoords)
+
+    // 设置旧鼠标坐标值  
+    selectionPt.setValue(lastMouseX, lastMouseY, 0); // mouseX 和 mouseY 是鼠标的二维坐标 
+    // 获取转换后的旧坐标  
+    var oldWorldCoords = selectionPt.getComputedWorldValue(renderer);
+    // console.log('world', oldWorldCoords)
+    // console.log('delta', newWorldCoords - oldWorldCoords)
+
+    // 计算3d偏移
+    const offset = {}
+    offset.x = newWorldCoords[0] - oldWorldCoords[0]
+    offset.y = newWorldCoords[1] - oldWorldCoords[1]
+    offset.z = newWorldCoords[2] - oldWorldCoords[2]
+    // console.log(offset)
+    // 将偏移加给camera和焦点
+    camera.setPosition(camPos[0] - offset.x, camPos[1] - offset.y, camPos[2] - offset.z)
+    camera.setFocalPoint(focalPos[0] - offset.x, focalPos[1] - offset.y, focalPos[2] - offset.z)
+
+    // 更新旧坐标
+    lastMouseX = mouseX;
+    lastMouseY = mouseY
+  }
+
+})
 
 
 // -----------------------------------------------------------
@@ -484,8 +543,11 @@ function pickOnMouseEvent(event) {
 
 // 限制鼠标事件处理的频率以提高性能
 const throttleMouseHandler = throttle(pickOnMouseEvent, 20);
+// const throttleMouseHandlerForCamera = throttle(moveCamera, 20);
 // 添加鼠标移动的事件监听器 
 document.addEventListener('mousemove', throttleMouseHandler);
+// document.addEventListener('wheel', renderer.handleWheel, { passive: true });  
+// document.addEventListener('mousemove', throttleMouseHandlerForCamera);
 
 // document.addEventListener('contextmenu', throttleMouseHandler);
 // ----------------------------------------------------------------------------
@@ -622,7 +684,7 @@ function processSelections(selections) {
             // 记录操作
             commandIndexArray.push(pointId)
             commandOldValueArray.push(labelTeeth['labels'][pointId])
-            commandNewValueArray.push(1)
+            commandNewValueArray.push(penType)
             // 更新
             labelTeeth['labels'][pointId] = penType;
           }
