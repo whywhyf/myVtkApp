@@ -3,15 +3,21 @@
 ## how to deploy
 
 ```shell
-// 构建依赖
+# 构建依赖
 npm install
 
-// 运行开发
+# 运行开发
 npm run server
 
-// 构建生产
+# 构建生产
 npm build
 ```
+
+## 前端框架
+
+### Webpack
+
+- [如何构建vtk.js - Webpack](https://kitware.github.io/vtk-js/docs/vtk_vanilla.html)
 
 ## 关于 vtk.js
 
@@ -115,5 +121,4 @@ npm build
     - [x] 鼠标中键按住平移镜头
     - [x] label不只是0和1，后期可用‘吸色笔’实现牙齿类别的区分
     - [ ] 迁移到vue时可以增强信息反馈和交互，比如在上方显示当前微调状态，mode，画笔颜色
-
 
