@@ -59,11 +59,13 @@ tooltipsElem.style.textAlign = 'center';
 
 const positionTooltipElem = document.createElement('div');
 const fieldIdTooltipElem = document.createElement('div');
+const labelIdTooltipElem = document.createElement('div');
 const compositeIdTooltipElem = document.createElement('div');
 const propIdTooltipElem = document.createElement('div');
 tooltipsElem.appendChild(positionTooltipElem);
 tooltipsElem.appendChild(propIdTooltipElem);
 tooltipsElem.appendChild(fieldIdTooltipElem);
+tooltipsElem.appendChild(labelIdTooltipElem);
 tooltipsElem.appendChild(compositeIdTooltipElem);
 
 document.querySelector('body').appendChild(tooltipsElem);
@@ -118,6 +120,70 @@ const commandOldValueArray = []
 const commandNewValueArray = []
 
 
+// ----------------------------------------------------------------------------
+// 创建颜色板
+// ----------------------------------------------------------------------------
+const colorbar = [
+  [255, 0, 0],
+  [255, 165, 0],
+  [255, 255, 0],
+  [0, 255, 0],
+  [0, 127, 255],
+  [0, 0, 255],
+  [139, 0, 255],
+]
+
+
+// ----------------------------------------------------------------------------
+// 用于区分牙齿类别的filter
+// ----------------------------------------------------------------------------
+const filterTeethType = vtkCalculator.newInstance()
+filterTeethType.setFormula({
+  getArrays: (inputDataSets) => ({
+    input: [{ location: FieldDataTypes.COORDINATE }], // Require point coordinates as input
+    output: [
+
+      {
+        location: FieldDataTypes.POINT, // This array will be field data ...
+        name: 'color', // ... with the given name ...
+        dataType: 'Uint8Array', // ... of this type ...
+        attribute: AttributeTypes.SCALARS, // ... and will be marked as the default scalars.
+        numberOfComponents: 3, // ... with this many components ...
+      },
+    ],
+  }),
+  evaluate: (arraysIn, arraysOut) => {
+    // Convert in the input arrays of vtkDataArrays into variables
+    // referencing the underlying JavaScript typed-data arrays:
+    const [coords] = arraysIn.map((d) => d.getData());
+    const [temp] = arraysOut.map((d) => d.getData());
+
+    // Since we are passed coords as a 3-component array,
+    // loop over all the points and compute the point-data output:
+    // console.log(1)
+    for (let i = 0, sz = coords.length / 3; i < sz; ++i) {
+
+      if (labelTeeth != null) {
+        if (labelTeeth['labels'][i] == 0) {
+          // 肉色241, 169, 153
+          temp[i * 3] = 241
+          temp[i * 3 + 1] = 169
+          temp[i * 3 + 2] = 153
+        } else {
+          // 白色255，255，255
+          // 252, 248, 239
+          let colorId = labelTeeth['labels'][i] % colorbar.length
+          temp[i * 3] = colorbar[colorId][0]
+          temp[i * 3 + 1] = colorbar[colorId][1]
+          temp[i * 3 + 2] = colorbar[colorId][2]
+        }
+      }
+
+    }
+    // Mark the output vtkDataArray as modified
+    arraysOut.forEach((x) => x.modified());
+  },
+});
 // ----------------------------------------------------------------------------
 // request obj from backend
 // ----------------------------------------------------------------------------
@@ -218,6 +284,8 @@ fetch('http://127.0.0.1:8000/polyData/')
 
     // 连接到actor并渲染
     filter.setInputData(polyTeeth)
+    filterTeethType.setInputData(polyTeeth)
+
     teethActor.setMapper(teethMapper);
     teethMapper.setInputConnection(filter.getOutputPort());
     renderer.addActor(teethActor)
@@ -546,6 +614,7 @@ const throttleMouseHandler = throttle(pickOnMouseEvent, 20);
 // const throttleMouseHandlerForCamera = throttle(moveCamera, 20);
 // 添加鼠标移动的事件监听器 
 document.addEventListener('mousemove', throttleMouseHandler);
+document.addEventListener('mousedown', throttleMouseHandler);
 // document.addEventListener('wheel', renderer.handleWheel, { passive: true });  
 // document.addEventListener('mousemove', throttleMouseHandlerForCamera);
 
@@ -631,6 +700,7 @@ function processSelections(selections) {
       const cellPoints = input.getCellPoints(attributeID);
       updateAssociationTooltip('Cell', attributeID);
 
+
       // 如果此时有按下右键，根据cellid更新渲染
       // drawPoint(polyTeeth, attributeID, labelTeeth);
 
@@ -642,6 +712,7 @@ function processSelections(selections) {
           // 如果获取到了这个指示器，就不要新建指示器
           if (propID != 2 && propID != 1) { return }
           if (pointIds.length < 3) { return }
+
           // console.log('points', pointIds)
           // console.log('hardware', hardwareSelector.getCurrentPass())
           // 获取points的坐标
@@ -679,6 +750,7 @@ function processSelections(selections) {
           renderer.addActor(faceActor)
           // drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
 
+
           // 更新labels
           for (let pointId of pointIds) {
             // 记录操作
@@ -689,6 +761,10 @@ function processSelections(selections) {
             labelTeeth['labels'][pointId] = penType;
           }
 
+        } else if (isMiddleMousePressed) {
+          // 中键按下吸色
+          penType = labelTeeth['labels'][pointIds[0]]
+          // console.log('pentype=', penType)
         }
 
         // Find the closest cell point, and use that as cursor position
@@ -699,8 +775,11 @@ function processSelections(selections) {
           vtkMath.distance2BetweenPoints(pA, propPosition) -
           vtkMath.distance2BetweenPoints(pB, propPosition);
         const sorted = points.sort(distance);
+        // console.log('point',sorted)
+        updateLabelTooltip('Label', labelTeeth['labels'][pointIds[0]])
         closestCellPointWorldPosition = [...sorted[0]];
         propToWorld.apply(closestCellPointWorldPosition);
+
       }
     }
   }
@@ -762,6 +841,14 @@ const updateAssociationTooltip = (type, id) => {
     fieldIdTooltipElem.innerHTML = `${type} ID: ${id}`;
   } else {
     fieldIdTooltipElem.innerHTML = '';
+  }
+};
+
+const updateLabelTooltip = (type, id) => {
+  if (type !== undefined && id !== undefined) {
+    labelIdTooltipElem.innerHTML = `${type} ID: ${id}`;
+  } else {
+    labelIdTooltipElem.innerHTML = '';
   }
 };
 
@@ -845,13 +932,14 @@ const PenType = {
 let penType = PenType.Teeth
 faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
 document.querySelector('.switch').addEventListener('click', () => {
-  penType = 1 - penType
-  if (penType == 0) {
+  if (penType == PenType.Gums) {
+    // console.log('change!')
+    penType = PenType.Teeth
+    faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
+  } else {
+    penType = PenType.Gums
     // console.log('change!')
     faceActor.getProperty().setColor(241 / 255, 169 / 255, 153 / 255)
-  } else {
-    // console.log('change!')
-    faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
   }
   // console.log(penType)
   // console.log(faceActor.getProperty().getColor())
@@ -859,6 +947,27 @@ document.querySelector('.switch').addEventListener('click', () => {
 })
 
 
+// ----------------------------------------------------------------------------
+// 切换模式 二分模式和类别模式
+// ----------------------------------------------------------------------------
+const modeType = {
+  normalMode: 0,
+  typeMode: 1
+}
+let mode = modeType.normalMode
+document.querySelector('.switchMode').addEventListener('click', () => {
+  if (mode == modeType.normalMode) {
+    mode = modeType.typeMode
+    teethMapper.setInputConnection(filterTeethType.getOutputPort())
+    teethActor.modified()
+  } else {
+    mode = modeType.normalMode
+    teethMapper.setInputConnection(filter.getOutputPort());
+    teethActor.modified()
+  }
+  renderWindow.render()
+  console.log('switch mode!')
+})
 
 // ----------------------------------------------------------------------------
 // 更新panel
