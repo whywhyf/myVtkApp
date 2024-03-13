@@ -969,6 +969,30 @@ document.querySelector('.switchMode').addEventListener('click', () => {
   console.log('switch mode!')
 })
 
+
+// ----------------------------------------------------------------------------
+// 将目前label push到服务器
+// ----------------------------------------------------------------------------
+document.querySelector('.push').addEventListener('click', () => {
+  fetch('http://127.0.0.1:8000/saveLabel/'  ,{
+  method: 'POST',  
+  headers: {  
+    'Content-Type': 'application/json',  
+  },  
+  body: JSON.stringify(labelTeeth), 
+  // credentials: 'include' 
+})  
+  .then(response => response.json())  
+  .then(data => {  
+    console.log('Success:', data);  
+  })  
+  .catch((error) => {  
+    console.error('Error:', error);  
+  });  
+  console.log('push!')
+})
+
+
 // ----------------------------------------------------------------------------
 // 更新panel
 // ----------------------------------------------------------------------------
