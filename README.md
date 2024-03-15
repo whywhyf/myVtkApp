@@ -3,15 +3,21 @@
 ## how to deploy
 
 ```shell
-// 构建依赖
+# 构建依赖
 npm install
 
-// 运行开发
+# 运行开发
 npm run server
 
-// 构建生产
+# 构建生产
 npm build
 ```
+
+## 前端框架
+
+### Webpack
+
+- [如何构建vtk.js - Webpack](https://kitware.github.io/vtk-js/docs/vtk_vanilla.html)
 
 ## 关于 vtk.js
 
@@ -101,12 +107,18 @@ npm build
           - [x] 前端解码，用 parseasbuffer 解析为 polydata
         - [x] 前端渲染
         - [ ] 如何控制颜色？用标量映射 lookuptable？
-        - [ ] 三角化？lodactor？重新画一个 polydata 覆盖在上面？发给后端？
-        - [ ] 更新 array 和 polydata 非常耗时，因为需要一路更新到 actor，研究一下能不能直接在 actor 上操作
+        - [x] 三角化？lodactor？重新画一个 polydata 覆盖在上面？发给后端？
+        - [x] 更新 array 和 polydata 非常耗时，因为需要一路更新到 actor，研究一下能不能直接在 actor 上操作 不行
+        - [x] 对原polydata的操作必须一路更新到actor，耗时无法避免，弃用该方案，改为创建polydata覆盖 polydatalist已弃用 因为数量多后渲染变慢
+        - [x] 试试appendpolydata？使用appendpolydata实现操作，要注意释放内存,
+        - [ ] 把polyface的const改成let？
+        - [ ] 后期试试用描框批量选中cell
         - [ ] 写一下 readme
-      - [ ] 最好有撤销和提交的功能
-    - [ ] 根据数据重新渲染模型，如改颜色
-  - [ ] 2 对碰撞点最近的点更改数据 vtkPointPicker  
-    - [ ] 获取离射线或碰撞点最近的点 id
-  - [ ] 管理点的数据
+      - [x] 最好有撤销和提交的功能
+      - [x] 添加了改变画笔的功能
+    - [x] 根据数据重新渲染模型，如改颜色
+    - [x] 右键释放即commit
+    - [x] 鼠标中键按住平移镜头
+    - [x] label不只是0和1，后期可用‘吸色笔’实现牙齿类别的区分
+    - [ ] 迁移到vue时可以增强信息反馈和交互，比如在上方显示当前微调状态，mode，画笔颜色
 

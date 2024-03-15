@@ -15,38 +15,34 @@ import vtkFPSMonitor from '@kitware/vtk.js/Interaction/UI/FPSMonitor';
 
 import vtkCellPicker from '@kitware/vtk.js/Rendering/Core/CellPicker';
 import vtkSphereSource from '@kitware/vtk.js/Filters/Sources/SphereSource';
-import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';  
+import vtkOBJReader from '@kitware/vtk.js/IO/Misc/OBJReader';
 import vtkHttpDataSetReader from "@kitware/vtk.js/IO/Core/HttpDataSetReader"
 import vtkXMLPolyDataReader from "@kitware/vtk.js/IO/XML/XMLPolyDataReader"
 import { FieldAssociations } from '@kitware/vtk.js/Common/DataModel/DataSet/Constants';
-import vtkMath from '@kitware/vtk.js/Common/Core/Math';
+import vtkMath, { float2CssRGBA } from '@kitware/vtk.js/Common/Core/Math';
 import { mat4 } from 'gl-matrix';
 import { throttle } from '@kitware/vtk.js/macros';
 import vtkMatrixBuilder from '@kitware/vtk.js/Common/Core/MatrixBuilder';
+import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
+import { vec3 } from 'gl-matrix';
+import vtkCoordinate from '@kitware/vtk.js//Rendering/Core/Coordinate'
 // import自定义的函数
-import {renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds} from './render'
-import { L } from '@kitware/vtk.js/macros2';
-import { obj } from '@kitware/vtk.js/macros';
+import { renderPolyDataCellByLabel, renderPolyDataPointByLabel, drawCell, drawPoint, drawPointbyPointIds } from './render'
+import { commitHandler } from './control'
+import { LabelCommand, CommandAdmin } from './control'
 
-// import controlPanel from './index.html';
-const controlPanel = `
-<table>
-  <tr>
-    <td>
-      <select class="representations" style="width: 100%">
-        <option value="0">Points</option>
-        <option value="1">Wireframe</option>
-        <option value="2" selected>Surface</option>
-      </select>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <input class="resolution" type="range" min="4" max="80" value="6" />
-    </td>
-  </tr>
-</table>
-`;
+
+import { I, L } from '@kitware/vtk.js/macros2';
+import { obj } from '@kitware/vtk.js/macros';
+import vtkSelectionNode from '@kitware/vtk.js/Common/DataModel/SelectionNode';
+import { Filter } from '@kitware/vtk.js/Rendering/OpenGL/Texture/Constants';
+import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
+import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
+import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
+import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
+
+import controlPanel from './controlPanel.html';
+import vtkLight from '@kitware/vtk.js/Rendering/Core/Light';
 
 
 // ----------------------------------------------------------------------------
@@ -55,7 +51,7 @@ const controlPanel = `
 const tooltipsElem = document.createElement('div');
 tooltipsElem.style.position = 'absolute';
 tooltipsElem.style.top = 0;
-tooltipsElem.style.left = 0;
+tooltipsElem.style.right = 0;
 tooltipsElem.style.padding = '10px';
 tooltipsElem.style.zIndex = 1;
 tooltipsElem.style.background = 'white';
@@ -63,11 +59,13 @@ tooltipsElem.style.textAlign = 'center';
 
 const positionTooltipElem = document.createElement('div');
 const fieldIdTooltipElem = document.createElement('div');
+const labelIdTooltipElem = document.createElement('div');
 const compositeIdTooltipElem = document.createElement('div');
 const propIdTooltipElem = document.createElement('div');
 tooltipsElem.appendChild(positionTooltipElem);
 tooltipsElem.appendChild(propIdTooltipElem);
 tooltipsElem.appendChild(fieldIdTooltipElem);
+tooltipsElem.appendChild(labelIdTooltipElem);
 tooltipsElem.appendChild(compositeIdTooltipElem);
 
 document.querySelector('body').appendChild(tooltipsElem);
@@ -76,10 +74,13 @@ document.querySelector('body').appendChild(tooltipsElem);
 // ----------------------------------------------------------------------------
 
 const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
+  rootContainer: document.body,
   background: [0, 0, 0],
 });
 const renderer = fullScreenRenderer.getRenderer();
 const renderWindow = fullScreenRenderer.getRenderWindow();
+renderer.setBackground(249 / 255, 205 / 255, 173 / 255)
+
 
 const fpsMonitor = vtkFPSMonitor.newInstance();
 const fpsElm = fpsMonitor.getFpsMonitorContainer();
@@ -95,82 +96,234 @@ fpsMonitor.setRenderWindow(renderWindow);
 fullScreenRenderer.setResizeCallback(fpsMonitor.update);
 
 // ----------------------------------------------------------------------------
-// Example code
+// 创建灯光
 // ----------------------------------------------------------------------------
-// create a filter on the fly, sort of cool, this is a random scalars
-// filter we create inline, for a simple cone you would not need
-// this
+const light = vtkLight.newInstance()
+light.setColor(0.5, 0.5, 0.5)
+light.setLightTypeToCameraLight()
+light.setPosition(80, 80, 80)
+renderer.addLight(light)
+
 // ----------------------------------------------------------------------------
+// 创建镜头
+// ----------------------------------------------------------------------------
+const camera = renderer.getActiveCamera()
 
-// const coneSource = vtkConeSource.newInstance({
-//   center: [0, 500000, 0],
-//   height: 1.0,
-// });
-// var polyData = coneSource.getOutputData()
-// polyData.buildCells()
+// ----------------------------------------------------------------------------
+// 创建命令实例和命令管理器实例
+// ----------------------------------------------------------------------------
+const commandAdmin = new CommandAdmin()
+global.commandAdmin = commandAdmin
+// global.labelCommand = labelCommand
+const commandIndexArray = []
+const commandOldValueArray = []
+const commandNewValueArray = []
 
-// 读取json文件
-// import labelData from '../json/myObject.json';
-// console.log('data:', labelData);
+
+// ----------------------------------------------------------------------------
+// 创建颜色板
+// ----------------------------------------------------------------------------
+const colorbar = [
+  [255, 0, 0],
+  [255, 165, 0],
+  [255, 255, 0],
+  [0, 255, 0],
+  [0, 127, 255],
+  [0, 0, 255],
+  [139, 0, 255],
+]
 
 
+// ----------------------------------------------------------------------------
+// 用于区分牙齿类别的filter
+// ----------------------------------------------------------------------------
+const filterTeethType = vtkCalculator.newInstance()
+filterTeethType.setFormula({
+  getArrays: (inputDataSets) => ({
+    input: [{ location: FieldDataTypes.COORDINATE }], // Require point coordinates as input
+    output: [
+
+      {
+        location: FieldDataTypes.POINT, // This array will be field data ...
+        name: 'color', // ... with the given name ...
+        dataType: 'Uint8Array', // ... of this type ...
+        attribute: AttributeTypes.SCALARS, // ... and will be marked as the default scalars.
+        numberOfComponents: 3, // ... with this many components ...
+      },
+    ],
+  }),
+  evaluate: (arraysIn, arraysOut) => {
+    // Convert in the input arrays of vtkDataArrays into variables
+    // referencing the underlying JavaScript typed-data arrays:
+    const [coords] = arraysIn.map((d) => d.getData());
+    const [temp] = arraysOut.map((d) => d.getData());
+
+    // Since we are passed coords as a 3-component array,
+    // loop over all the points and compute the point-data output:
+    // console.log(1)
+    for (let i = 0, sz = coords.length / 3; i < sz; ++i) {
+
+      if (labelTeeth != null) {
+        if (labelTeeth['labels'][i] == 0) {
+          // 肉色241, 169, 153
+          temp[i * 3] = 241
+          temp[i * 3 + 1] = 169
+          temp[i * 3 + 2] = 153
+        } else {
+          // 白色255，255，255
+          // 252, 248, 239
+          let colorId = labelTeeth['labels'][i] % colorbar.length
+          temp[i * 3] = colorbar[colorId][0]
+          temp[i * 3 + 1] = colorbar[colorId][1]
+          temp[i * 3 + 2] = colorbar[colorId][2]
+        }
+      }
+
+    }
+    // Mark the output vtkDataArray as modified
+    arraysOut.forEach((x) => x.modified());
+  },
+});
 // ----------------------------------------------------------------------------
 // request obj from backend
 // ----------------------------------------------------------------------------
-let polyTeeth = null; 
-let labelTeeth = null; 
-let colorArray = null;  
-const TeethMapper = vtkMapper.newInstance();
-const TeethActor = vtkActor.newInstance();
+let polyTeeth = null;
+let labelTeeth = null;
+let labelTeethOrigin = null;
+let colorsArray = null;
+const teethMapper = vtkMapper.newInstance();
+const teethActor = vtkActor.newInstance();
+
+// 用于颜色渲染的filter
+const filter = vtkCalculator.newInstance()
+// console.log(filter)
+
+filter.setFormula({
+  getArrays: (inputDataSets) => ({
+    input: [{ location: FieldDataTypes.COORDINATE }], // Require point coordinates as input
+    output: [
+
+      {
+        location: FieldDataTypes.POINT, // This array will be field data ...
+        name: 'color', // ... with the given name ...
+        dataType: 'Uint8Array', // ... of this type ...
+        attribute: AttributeTypes.SCALARS, // ... and will be marked as the default scalars.
+        numberOfComponents: 3, // ... with this many components ...
+      },
+    ],
+  }),
+  evaluate: (arraysIn, arraysOut) => {
+    // Convert in the input arrays of vtkDataArrays into variables
+    // referencing the underlying JavaScript typed-data arrays:
+    const [coords] = arraysIn.map((d) => d.getData());
+    const [temp] = arraysOut.map((d) => d.getData());
+
+    // Since we are passed coords as a 3-component array,
+    // loop over all the points and compute the point-data output:
+    // console.log(1)
+    for (let i = 0, sz = coords.length / 3; i < sz; ++i) {
+
+      if (labelTeeth != null) {
+        if (labelTeeth['labels'][i] == 0) {
+          // 肉色250, 210, 185
+          // 	241, 191, 153
+          // 241, 169, 153
+          temp[i * 3] = 241
+          temp[i * 3 + 1] = 169
+          temp[i * 3 + 2] = 153
+        } else {
+          // 白色255，255，255
+          // 252, 248, 239
+          temp[i * 3] = 252
+          temp[i * 3 + 1] = 248
+          temp[i * 3 + 2] = 239
+        }
+      }
+
+    }
+    // Mark the output vtkDataArray as modified
+    arraysOut.forEach((x) => x.modified());
+  },
+});
 
 
 console.log('downloaing polydata...')
-fetch('http://127.0.0.1:8000/polyData/')  
-  .then(response => response.json())  
-  .then(data => {  
+fetch('http://127.0.0.1:8000/polyData/')
+  .then(response => response.json())
+  .then(data => {
     // 在这里处理从后端获取的数据 
     var polyDataString = data['polyData']
     // console.log('success', data['polyData']); 
 
     // 创建一个XML reader  
-    var reader = vtkXMLPolyDataReader.newInstance();  
- 
+    var reader = vtkXMLPolyDataReader.newInstance();
+
     // 将polydata字符串以arraybuffer形式解析
     const arrayBuffer = base64ToArrayBuffer(polyDataString)
     // console.log(arrayBuffer)
-    reader.parseAsArrayBuffer(arrayBuffer);  
+    reader.parseAsArrayBuffer(arrayBuffer);
 
     // 获取解析后的PolyData对象  
-    polyTeeth = reader.getOutputData(0); 
+    polyTeeth = reader.getOutputData(0);
     // console.log(polyTeeth.getNumberOfPoints())
-
+    global.polyTeeth = polyTeeth
     // let b = JSON.parse(JSON.stringify(polyTeeth));
     if (!polyTeeth.getCells()) {
       polyTeeth.buildCells();
     }
     labelTeeth = data['labelData']
-
+    labelTeethOrigin = { ...labelTeeth }
+    // console.log(labelTeeth)
+    addColor(polyTeeth)
+    colorsArray = polyTeeth.getPointData().getScalars().getData()
+    // console.log(colorsArray)
     // 根据json渲染模型
-    renderPolyDataPointByLabel(polyTeeth, labelTeeth)
-    colorArray = polyTeeth.getPointData().getScalars();
+    // renderPolyDataPointByLabel(polyTeeth, labelTeeth)
+    // colorArray = polyTeeth.getPointData().getScalars();
+
 
     // 连接到actor并渲染
-    TeethActor.setMapper(TeethMapper);
-    TeethMapper.setInputData(polyTeeth);
-    renderer.addActor(TeethActor)
+    filter.setInputData(polyTeeth)
+    filterTeethType.setInputData(polyTeeth)
+
+    teethActor.setMapper(teethMapper);
+    teethMapper.setInputConnection(filter.getOutputPort());
+    renderer.addActor(teethActor)
     renderer.resetCamera();
     renderWindow.render();
-    // console.log('rendering success')
-
-    
+    console.log('rendering success')
 
 
-  })  
-  .catch(error => {  
-    // 在这里处理发生的错误  
-    console.error('发生错误:', error);  
-  });  
 
+
+  })
+// .catch(error => {  
+//   // 在这里处理发生的错误  
+//   console.error('发生错误:', error);  
+// });  
+
+// rgb颜色
+function addColor(ds) {
+  const size = ds.getPoints().getData().length;
+  const rgbArray = new Uint8Array(size);
+  let offset = 0;
+
+
+  // while (offset < size) {
+  //   rgbArray[offset++] = r;
+  //   rgbArray[offset++] = g;
+  //   rgbArray[offset++] = b;
+  // }
+
+
+  ds.getPointData().setScalars(
+    vtkDataArray.newInstance({
+      name: 'color',
+      numberOfComponents: 3,
+      values: rgbArray,
+    })
+  );
+}
 
 // 将base64编码的字符串编码为arraybuffer
 function base64ToArrayBuffer(base64) {
@@ -178,11 +331,11 @@ function base64ToArrayBuffer(base64) {
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes.buffer;
 }
- 
+
 
 renderer.resetCamera();
 renderWindow.render();
@@ -200,6 +353,7 @@ const apiSpecificRenderWindow = interactor.getView();
 // Create hardware selector
 // ----------------------------------------------------------------------------
 const hardwareSelector = apiSpecificRenderWindow.getSelector();
+global.hardwareSelector = hardwareSelector
 hardwareSelector.setCaptureZValues(true);
 // TODO: bug in FIELD_ASSOCIATION_POINTS mode
 // hardwareSelector.setFieldAssociation(
@@ -231,11 +385,11 @@ let isRightMousePressed = false;
 // Setup picking interaction
 // ----------------------------------------------------------------------------
 // Only try to pick cone
-const picker = vtkCellPicker.newInstance();
-picker.setPickFromList(1);
-picker.setTolerance(0);
-picker.initializePickList();
-picker.addPickList(TeethActor);
+// const picker = vtkCellPicker.newInstance();
+// picker.setPickFromList(1);
+// picker.setTolerance(0);
+// picker.initializePickList();
+// picker.addPickList(TeethActor);
 
 
 // Pick on mouse right click
@@ -281,7 +435,7 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
     // sphereActor.setMapper(sphereMapper);
     renderer.addActor(sphereActor);
     // datascoure数据更新时，只需更新到mapper的连接，再addactor,其余可在初始化时设置好
-    
+
   }
   renderWindow.render();
 });
@@ -291,76 +445,102 @@ renderWindow.getInteractor().onRightButtonPress((callData) => {
 
 
 
-// Pick on mouse move
-// renderWindow.getInteractor().onMouseMove((callData) => {
-//   return;
-//   if (renderer !== callData.pokedRenderer) {
-//     return;
-//   }
-
-//   if (isRightMousePressed == false){ 
-
-//   }
-//   else{
-//       const pos = callData.position;
-//       const point = [pos.x, pos.y, 0.0];
-//       console.log(`Pick at: ${point}`);
-//       picker.pick(point, renderer);
-
-//       if (picker.getActors().length === 0) {
-
-//       }
-//       else{
-//         const pickedCellId = picker.getCellId();
-//         console.log('Picked cell: ', pickedCellId);
-
-//         // 编辑cell
-//         // drawCell(polyData, pickedCellId, labelData);
-
-//         const pickedPoints = picker.getPickedPositions();
-
-//         // 更新球体位置
-//         const pickedPoint = pickedPoints[0];
-//         console.log(`Picked: ${pickedPoint}`);
-//         sphere.setCenter(pickedPoint);
-//         sphere.setRadius(0.01);
-//         sphereMapper.setInputData(sphere.getOutputData());
-//         sphereActor.setMapper(sphereMapper);
-//         renderer.addActor(sphereActor);
-//   }
-
-//   }
-//   renderWindow.render();
-// });
-
 
 // Pick on mouse release
 renderWindow.getInteractor().onRightButtonRelease((callData) => {
   isRightMousePressed = false;
+  if (canCommit) {
+    // 更新渲染
+    allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+
+    // 记录操作
+    const labelCommand = new LabelCommand(labelTeeth['labels'])
+    global.labelCommand = labelCommand
+    labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
+    commandIndexArray.length = 0
+    commandOldValueArray.length = 0
+    commandNewValueArray.length = 0
+    commandAdmin.pushCommand(labelCommand)
+
+    // 更新panel
+    canCommit = false
+    updateControlPanel()
+    console.log('commit!')
+  }
 });
 
+// ----------------------------------------------------------------------------
+// 鼠标中键事件
+// ----------------------------------------------------------------------------
+let isMiddleMousePressed = false
+let lastMouseX = null
+let lastMouseY = null
 
-// -----------------------------------------------------------
-// UI control handling
-// -----------------------------------------------------------
+// 按下
+renderWindow.getInteractor().onMiddleButtonPress((callData) => {
+  lastMouseX = callData.position.x;
+  lastMouseY = callData.position.y
+  isMiddleMousePressed = true
+})
 
-// fullScreenRenderer.addController(controlPanel);
-// const representationSelector = document.querySelector('.representations');
-// const resolutionChange = document.querySelector('.resolution');
+// 释放
+renderWindow.getInteractor().onMiddleButtonRelease((callData) => {
+  isMiddleMousePressed = false
+})
 
-// representationSelector.addEventListener('change', (e) => {
-//   const newRepValue = Number(e.target.value);
-//   actor.getProperty().setRepresentation(newRepValue);
-//   renderWindow.render();
-//   fpsMonitor.update();
-// });
+// 按住
+renderWindow.getInteractor().onMouseMove((callData) => {
+  if (isMiddleMousePressed) {
+    let mouseX = callData.position.x;
+    let mouseY = callData.position.y;
+    // let deltaX = -(mouseX - lastMouseX)
+    // let deltaY = mouseY - lastMouseY
+    // let sensitivity = 0.01
+    let focalPos = camera.getFocalPoint()
+    let camPos = camera.getPosition()
+    global.focalPos = focalPos
+    global.camPos = camPos
+    // console.log('cameramove from', focalPos)
 
-// resolutionChange.addEventListener('input', (e) => {
-//   const resolution = Number(e.target.value);
-//   coneSource.setResolution(resolution);
-//   renderWindow.render();
-//   fpsMonitor.update();
-// });
+    // 转换为世界坐标  
+    // 创建一个vtkCoordinate对象  
+    var selectionPt = vtkCoordinate.newInstance();
+
+    // 将坐标系统设置为显示坐标系  
+    selectionPt.setCoordinateSystemToDisplay();
+
+    // 设置新鼠标坐标值  
+    selectionPt.setValue(mouseX, mouseY, 0); // mouseX 和 mouseY 是鼠标的二维坐标  
+
+    // 获取转换后的新坐标  
+    var newWorldCoords = selectionPt.getComputedWorldValue(renderer);
+
+    // console.log('world', newWorldCoords)
+
+    // 设置旧鼠标坐标值  
+    selectionPt.setValue(lastMouseX, lastMouseY, 0); // mouseX 和 mouseY 是鼠标的二维坐标 
+    // 获取转换后的旧坐标  
+    var oldWorldCoords = selectionPt.getComputedWorldValue(renderer);
+    // console.log('world', oldWorldCoords)
+    // console.log('delta', newWorldCoords - oldWorldCoords)
+
+    // 计算3d偏移
+    const offset = {}
+    offset.x = newWorldCoords[0] - oldWorldCoords[0]
+    offset.y = newWorldCoords[1] - oldWorldCoords[1]
+    offset.z = newWorldCoords[2] - oldWorldCoords[2]
+    // console.log(offset)
+    // 将偏移加给camera和焦点
+    camera.setPosition(camPos[0] - offset.x, camPos[1] - offset.y, camPos[2] - offset.z)
+    camera.setFocalPoint(focalPos[0] - offset.x, focalPos[1] - offset.y, focalPos[2] - offset.z)
+
+    // 更新旧坐标
+    lastMouseX = mouseX;
+    lastMouseY = mouseY
+  }
+
+})
+
 
 // -----------------------------------------------------------
 // Make some variables global so that you can inspect and
@@ -368,8 +548,9 @@ renderWindow.getInteractor().onRightButtonRelease((callData) => {
 // -----------------------------------------------------------
 
 // global.source = coneSource;
-global.TeethMapper = TeethMapper;
-global.TeethActor = TeethActor;
+global.polyTeeth = polyTeeth;
+global.teethMapper = teethMapper;
+global.teethActor = teethActor;
 global.renderer = renderer;
 global.renderWindow = renderWindow;
 
@@ -388,35 +569,56 @@ const pointerActor = vtkActor.newInstance();
 pointerActor.setMapper(pointerMapper);
 pointerMapper.setInputConnection(pointerSource.getOutputPort());
 
+
+// ----------------------------------------------------------------------------
+// Create pick face indicater
+// ----------------------------------------------------------------------------
+const polyFace = vtkPolyData.newInstance()
+global.polyFace = polyFace
+const faceMapper = vtkMapper.newInstance();
+const faceActor = vtkActor.newInstance();
+faceActor.setMapper(faceMapper);
+const polyFaceList = []
+
+let allPolyFace = vtkAppendPolyData.newInstance()
+global.allPolyFace = allPolyFace
+
+
+// renderer.addActor(faceActor)
+
 // -----------------------------------------------------------
 // selection by hardware
 // -----------------------------------------------------------
 
 // 在鼠标事件上进行拾取的函数  
-function pickOnMouseEvent(event) {  
-  if (interactor.isAnimating()) {  
+function pickOnMouseEvent(event) {
+  if (interactor.isAnimating()) {
     // 在场景交互期间阻止拾取  
-    return;  
-  }  
-  const [x, y] = eventToWindowXY(event);  
-  
+    return;
+  }
+  const [x, y] = eventToWindowXY(event);
+
   // 隐藏指针角色并启动基于硬件的拾取  
   // pointerActor.setVisibility(false);  
-  hardwareSelector.getSourceDataAsync(renderer, x, y, x, y).then((result) => {  
-    if (result) {  
-      processSelections(result.generateSelection(x, y, x, y));  
-    } else {  
-      processSelections(null);  
-    }  
-  });  
-} 
+  hardwareSelector.getSourceDataAsync(renderer, x, y, x, y).then((result) => {
+    if (result) {
+      processSelections(result.generateSelection(x, y, x, y));
+    } else {
+      processSelections(null);
+    }
+  });
+}
 
 // 限制鼠标事件处理的频率以提高性能
 const throttleMouseHandler = throttle(pickOnMouseEvent, 20);
+// const throttleMouseHandlerForCamera = throttle(moveCamera, 20);
 // 添加鼠标移动的事件监听器 
 document.addEventListener('mousemove', throttleMouseHandler);
+document.addEventListener('mousedown', throttleMouseHandler);
+// document.addEventListener('wheel', renderer.handleWheel, { passive: true });  
+// document.addEventListener('mousemove', throttleMouseHandlerForCamera);
 
-
+// document.addEventListener('contextmenu', throttleMouseHandler);
 // ----------------------------------------------------------------------------
 // Create Mouse listener for picking on mouse move
 // ----------------------------------------------------------------------------
@@ -447,6 +649,11 @@ function processSelections(selections) {
 
   // 从第一个选择中提取属性
   // 此时已选中目标
+  // console.log(selections.length)
+  // let i = 0;
+  // for (let i = 0;i<selections.length;i++){
+  //   if (selections[i].getProperties().compositeID==1){console.log('ok');return}
+  // }
   const {
     worldPosition: rayHitWorldPosition,
     compositeID,
@@ -493,6 +700,7 @@ function processSelections(selections) {
       const cellPoints = input.getCellPoints(attributeID);
       updateAssociationTooltip('Cell', attributeID);
 
+
       // 如果此时有按下右键，根据cellid更新渲染
       // drawPoint(polyTeeth, attributeID, labelTeeth);
 
@@ -500,10 +708,65 @@ function processSelections(selections) {
         const pointIds = cellPoints.cellPointIds;
 
         // 如果此时有按下右键，根据pointids更新渲染
-        if (isRightMousePressed){
-          drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+        if (isRightMousePressed) {
+          // 如果获取到了这个指示器，就不要新建指示器
+          if (propID != 2 && propID != 1) { return }
+          if (pointIds.length < 3) { return }
+
+          // console.log('points', pointIds)
+          // console.log('hardware', hardwareSelector.getCurrentPass())
+          // 获取points的坐标
+          let num = 0
+          const facePoints = []
+          // const faceLines = [2, 0, 1, 2, 0, 2, 2, 1, 2]
+          const facePolys = [pointIds.length]
+          for (let pointId of pointIds) {
+            const xyz = polyTeeth.getPoints().getPoint(pointId)
+            facePoints.push(xyz[0], xyz[1] - 0.01, xyz[2])
+            facePolys.push(num++)
+          }
+          // console.log('pointids', pointIds)
+
+
+
+
+          // 创建一个新的polydata并覆盖在模型上
+          const polyFace = vtkPolyData.newInstance()
+          polyFace.getPoints().setData(Float32Array.from(facePoints), 3);
+          // polyFace.getLines().setData(Uint16Array.from(faceLines));
+          polyFace.getPolys().setData(Uint32Array.from(facePolys));
+          // console.log('facepoints', facePoints)
+          // polyFace.buildCells()
+          // polyFace.modified()
+          // polyFaceList.push(polyFace)
+          allPolyFace.addInputData(polyFace)
+          if (canCommit == false) {
+            canCommit = true
+            updateControlPanel()
+          }
+
+          // teethActor.setVisibility(false)
+          faceMapper.setInputConnection(allPolyFace.getOutputPort())
+          renderer.addActor(faceActor)
+          // drawPointbyPointIds(polyTeeth, pointIds, labelTeeth)
+
+
+          // 更新labels
+          for (let pointId of pointIds) {
+            // 记录操作
+            commandIndexArray.push(pointId)
+            commandOldValueArray.push(labelTeeth['labels'][pointId])
+            commandNewValueArray.push(penType)
+            // 更新
+            labelTeeth['labels'][pointId] = penType;
+          }
+
+        } else if (isMiddleMousePressed) {
+          // 中键按下吸色
+          penType = labelTeeth['labels'][pointIds[0]]
+          // console.log('pentype=', penType)
         }
-        
+
         // Find the closest cell point, and use that as cursor position
         const points = Array.from(pointIds).map((pointId) =>
           input.getPoints().getPoint(pointId)
@@ -512,8 +775,11 @@ function processSelections(selections) {
           vtkMath.distance2BetweenPoints(pA, propPosition) -
           vtkMath.distance2BetweenPoints(pB, propPosition);
         const sorted = points.sort(distance);
+        // console.log('point',sorted)
+        updateLabelTooltip('Label', labelTeeth['labels'][pointIds[0]])
         closestCellPointWorldPosition = [...sorted[0]];
         propToWorld.apply(closestCellPointWorldPosition);
+
       }
     }
   }
@@ -578,6 +844,14 @@ const updateAssociationTooltip = (type, id) => {
   }
 };
 
+const updateLabelTooltip = (type, id) => {
+  if (type !== undefined && id !== undefined) {
+    labelIdTooltipElem.innerHTML = `${type} ID: ${id}`;
+  } else {
+    labelIdTooltipElem.innerHTML = '';
+  }
+};
+
 
 const updateCursor = (worldPosition) => {
   if (lastProcessedActor) {
@@ -589,3 +863,159 @@ const updateCursor = (worldPosition) => {
   renderWindow.render();
   updatePositionTooltip(worldPosition);
 };
+
+
+// -----------------------------------------------------------
+// UI control handling
+// -----------------------------------------------------------
+fullScreenRenderer.addController(controlPanel);
+const commitButton = document.getElementById('commit');
+const undoButton = document.getElementById('undo');
+const redoButton = document.getElementById('redo');
+global.undoButton = undoButton
+let canCommit = false
+updateControlPanel()
+// ----------------------------------------------------------------------------
+// 提交目前的操作并清理内存
+// ----------------------------------------------------------------------------
+// document.querySelector('.commit').addEventListener('click', () => {
+//   // 更新渲染
+//   allPolyFace = commitHandler(polyTeeth, faceActor, allPolyFace, renderer, window)
+
+//   // 记录操作
+//   const labelCommand = new LabelCommand(labelTeeth['labels'])
+//   global.labelCommand = labelCommand
+//   labelCommand.inputArray(commandIndexArray, commandOldValueArray, commandNewValueArray)
+//   commandIndexArray.length = 0
+//   commandOldValueArray.length = 0
+//   commandNewValueArray.length = 0
+//   commandAdmin.pushCommand(labelCommand)
+
+//   // 更新panel
+//   canCommit = false
+//   updateControlPanel()
+//   console.log('commit!')
+// })
+
+
+// ----------------------------------------------------------------------------
+// 撤销目前的操作并清理内存
+// ----------------------------------------------------------------------------
+document.querySelector('.undo').addEventListener('click', () => {
+  commandAdmin.undoCommand()
+  polyTeeth.modified()
+  renderWindow.render()
+  updateControlPanel()
+  console.log('undo!')
+})
+
+
+// ----------------------------------------------------------------------------
+// redo目前的操作并清理内存
+// ----------------------------------------------------------------------------
+document.querySelector('.redo').addEventListener('click', () => {
+  commandAdmin.redoCommand()
+  polyTeeth.modified()
+  renderWindow.render()
+  updateControlPanel()
+  console.log('redo!')
+})
+
+
+// ----------------------------------------------------------------------------
+// 切换画笔
+// ----------------------------------------------------------------------------
+const PenType = {
+  Teeth: 1,
+  Gums: 0
+}
+let penType = PenType.Teeth
+faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
+document.querySelector('.switch').addEventListener('click', () => {
+  if (penType == PenType.Gums) {
+    // console.log('change!')
+    penType = PenType.Teeth
+    faceActor.getProperty().setColor(252 / 255, 248 / 255, 239 / 255)
+  } else {
+    penType = PenType.Gums
+    // console.log('change!')
+    faceActor.getProperty().setColor(241 / 255, 169 / 255, 153 / 255)
+  }
+  // console.log(penType)
+  // console.log(faceActor.getProperty().getColor())
+  console.log('switch!')
+})
+
+
+// ----------------------------------------------------------------------------
+// 切换模式 二分模式和类别模式
+// ----------------------------------------------------------------------------
+const modeType = {
+  normalMode: 0,
+  typeMode: 1
+}
+let mode = modeType.normalMode
+document.querySelector('.switchMode').addEventListener('click', () => {
+  if (mode == modeType.normalMode) {
+    mode = modeType.typeMode
+    teethMapper.setInputConnection(filterTeethType.getOutputPort())
+    teethActor.modified()
+  } else {
+    mode = modeType.normalMode
+    teethMapper.setInputConnection(filter.getOutputPort());
+    teethActor.modified()
+  }
+  renderWindow.render()
+  console.log('switch mode!')
+})
+
+
+// ----------------------------------------------------------------------------
+// 将目前label push到服务器
+// ----------------------------------------------------------------------------
+document.querySelector('.push').addEventListener('click', () => {
+  fetch('http://127.0.0.1:8000/saveLabel/'  ,{
+  method: 'POST',  
+  headers: {  
+    'Content-Type': 'application/json',  
+  },  
+  body: JSON.stringify(labelTeeth), 
+  // credentials: 'include' 
+})  
+  .then(response => response.json())  
+  .then(data => {  
+    console.log('Success:', data);  
+  })  
+  .catch((error) => {  
+    console.error('Error:', error);  
+  });  
+  console.log('push!')
+})
+
+
+// ----------------------------------------------------------------------------
+// 更新panel
+// ----------------------------------------------------------------------------
+function updateControlPanel() {
+  // if (canCommit) {
+  //   commitButton.disabled = false
+  //   commitButton.style.backgroundColor = "#4CAF50";
+  // } else {
+  //   commitButton.disabled = true
+  //   commitButton.style.backgroundColor = "gray";
+  // }
+  if (commandAdmin.canUndo) {
+    undoButton.disabled = false
+    undoButton.style.backgroundColor = "#4CAF50";
+  } else {
+    undoButton.disabled = true
+    undoButton.style.backgroundColor = "gray";
+  }
+  if (commandAdmin.canRedo) {
+    redoButton.disabled = false
+    redoButton.style.backgroundColor = "#4CAF50";
+  } else {
+    redoButton.disabled = true
+    redoButton.style.backgroundColor = "gray";
+  }
+}
