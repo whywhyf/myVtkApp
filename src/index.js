@@ -40,6 +40,7 @@ import vtkPolyData from '@kitware/vtk.js/Common/DataModel/PolyData';
 import vtkPoints from '@kitware/vtk.js/Common/Core/Points';
 import vtkPolyLine from '@kitware/vtk.js/Common/DataModel/PolyLine';
 import vtkAppendPolyData from '@kitware/vtk.js/Filters/General/AppendPolyData';
+import vtkXMLPolyDataWriter from '@kitware/vtk.js/IO/XML/XMLPolyDataWriter';
 
 import controlPanel from './controlPanel.html';
 import vtkLight from '@kitware/vtk.js/Rendering/Core/Light';
@@ -189,6 +190,7 @@ filterTeethType.setFormula({
 // ----------------------------------------------------------------------------
 let polyTeeth = null;
 let labelTeeth = null;
+
 let labelTeethOrigin = null;
 let colorsArray = null;
 const teethMapper = vtkMapper.newInstance();
@@ -265,14 +267,18 @@ fetch('http://127.0.0.1:8000/polyData/')
 
     // 获取解析后的PolyData对象  
     polyTeeth = reader.getOutputData(0);
+    // saveObjandsegTooth(polyTeeth)
     // console.log(polyTeeth.getNumberOfPoints())
     global.polyTeeth = polyTeeth
     // let b = JSON.parse(JSON.stringify(polyTeeth));
     if (!polyTeeth.getCells()) {
       polyTeeth.buildCells();
     }
-    labelTeeth = data['labelData']
-    labelTeethOrigin = { ...labelTeeth }
+    // todo 先不要label
+    // labelTeeth = data['labelData']
+    // labelTeethOrigin = { ...labelTeeth }
+    labelTeeth = {labels: new Array(polyTeeth.getNumberOfPoints()).fill(1)}
+    global.labelTeeth = labelTeeth
     // console.log(labelTeeth)
     addColor(polyTeeth)
     colorsArray = polyTeeth.getPointData().getScalars().getData()
@@ -281,7 +287,7 @@ fetch('http://127.0.0.1:8000/polyData/')
     // renderPolyDataPointByLabel(polyTeeth, labelTeeth)
     // colorArray = polyTeeth.getPointData().getScalars();
 
-
+    
     // 连接到actor并渲染
     filter.setInputData(polyTeeth)
     filterTeethType.setInputData(polyTeeth)
@@ -661,6 +667,7 @@ function processSelections(selections) {
     propID,
     attributeID,
   } = selections[0].getProperties();
+  global.selection = selections[0];
 
   // 更新复合ID和属性ID的工具提示
   updateCompositeAndPropIdTooltip(compositeID, propID);
@@ -974,21 +981,21 @@ document.querySelector('.switchMode').addEventListener('click', () => {
 // 将目前label push到服务器
 // ----------------------------------------------------------------------------
 document.querySelector('.push').addEventListener('click', () => {
-  fetch('http://127.0.0.1:8000/saveLabel/'  ,{
-  method: 'POST',  
-  headers: {  
-    'Content-Type': 'application/json',  
-  },  
-  body: JSON.stringify(labelTeeth), 
-  // credentials: 'include' 
-})  
-  .then(response => response.json())  
-  .then(data => {  
-    console.log('Success:', data);  
-  })  
-  .catch((error) => {  
-    console.error('Error:', error);  
-  });  
+  fetch('http://127.0.0.1:8000/saveLabel/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(labelTeeth),
+    // credentials: 'include' 
+  })
+    .then(response => response.json())
+    .then(data => {
+      console.log('Success:', data);
+    })
+    .catch((error) => {
+      console.error('Error:', error);
+    });
   console.log('push!')
 })
 
@@ -1018,4 +1025,36 @@ function updateControlPanel() {
     redoButton.disabled = true
     redoButton.style.backgroundColor = "gray";
   }
+}
+
+
+// ----------------------------------------------------------------------------
+// 將polydata转为二进制并发送
+// ----------------------------------------------------------------------------
+document.querySelector('.segment').addEventListener('click', () => {
+  saveObjandsegTooth(polyTeeth)
+  console.log('segment!')
+})
+
+function saveObjandsegTooth(polyData) {
+  let writer = vtkXMLPolyDataWriter.newInstance();
+  let polyDataAsString = writer.write(polyData);
+  let formData = new FormData();
+  formData.append("polyData", new Blob([polyDataAsString], { type: "text/xml" }));
+
+
+  // 发送数据到后端  
+  fetch('http://127.0.0.1:8000/saveObjandsegTooth/', {
+    method: 'POST',
+    body: formData
+  })
+    .then(response => response.json())
+    .then(data => {
+      console.log('Success:', data);
+      labelTeeth = data['labelData'];
+      polyTeeth.modified()
+    })
+    .catch(error => {
+      // 处理错误  
+    });
 }
